@@ -201,7 +201,7 @@ Findings and resolutions:
   - The grace check fits the background time iOS grants.
 - **Accepted P3s:**
   - On first use, if the user takes more than 25 s to pick a strap that isn't auto-picked, the phone may take it back first.
-  - First-use auto-pick takes the only WHOOP-named strap in range.
+  - First-use name-based auto-pick was **removed** after an automated security review: a spoofed "WHOOP" device could inject readings. The first connection is a tap, and only that user-picked strap is reconnected automatically.
 - **Checks after round 2:**
   - `NOOPiOSTests`: 28 tests, 0 failures.
   - The iOS + watch and macOS builds succeed with no new warnings.

@@ -141,14 +141,10 @@ extension WatchDirectBLEClient: CBCentralManagerDelegate {
                 rssi: RSSI.intValue
             )
             self.state.upsertDiscoveredDevice(device)
-            guard self.state.scanning else { return }
-            // Reconnect to the strap used last time without making the user pick it again. On first
-            // use, pick a WHOOP strap automatically when it is the only one in range.
-            if peripheral.identifier == self.lastDeviceID {
-                self.connect(to: device)
-            } else if self.lastDeviceID == nil,
-                      device.displayName.localizedCaseInsensitiveContains("WHOOP"),
-                      self.state.discoveredDevices.filter({ $0.displayName.localizedCaseInsensitiveContains("WHOOP") }).count == 1 {
+            // Reconnect to the strap the user picked last time without making them pick it again.
+            // Never auto-pick by advertised name: any nearby device can claim to be "WHOOP" and would
+            // then feed readings into the phone's history. The first connection is always a tap.
+            if self.state.scanning, peripheral.identifier == self.lastDeviceID {
                 self.connect(to: device)
             }
         }
