@@ -296,6 +296,8 @@ final class AppModel: ObservableObject {
         ble.connect(model: chosen)
     }
     func disconnect() { ble.disconnect() }
+    /// Re-take the strap whenever it becomes free again (see `BLEManager.awaitStrapReturn`).
+    func awaitStrapReturn() { ble.awaitStrapReturn() }
 
     /// Drop the current strap and clear bond state so a newly-picked strap model connects fresh
     /// (lets a user with both a WHOOP 4 and a 5/MG switch between them).

@@ -72,3 +72,6 @@ export.zip
 # Python bytecode
 __pycache__/
 *.pyc
+
+# ── Personal signing override (see Config/Local.xcconfig.example) ──
+Config/Local.xcconfig

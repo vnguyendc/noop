@@ -48,6 +48,41 @@ Prefer to build it yourself (which also grants HealthKit/widgets under your own 
 [PR #42](../../../pull/42) port onto current `main` is summarised in **"Lessons from the fold-in"**
 below.
 
+### Sign with your own team (iPhone + Apple Watch)
+
+A build signed with a paid Apple Developer team gets 1-year installs, HealthKit (Apple Health
+write-back and the watch's workout mode) and App Groups (widgets, complication). A free Apple ID
+works too, but re-signs every 7 days and won't get HealthKit.
+
+1. **Set your team once.** Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` (it is
+   git-ignored) and set `DEVELOPMENT_TEAM` to your Team ID and `BUNDLE_ID_PREFIX` to a reverse-DNS
+   prefix you control. The bundle IDs and App Groups are derived from that prefix, so nothing in the
+   shared project changes.
+2. **Sign in to Xcode.** Xcode → Settings → Accounts must show your Apple ID with no "session
+   expired" warning. Xcode registers the IDs, App Groups and devices on the first signed build.
+3. **Bring the devices online.** Unlock the iPhone, connect it by cable or the same Wi-Fi, and turn on
+   Developer Mode (Settings → Privacy & Security). For the watch: unlock it, keep it near the phone,
+   and turn on Developer Mode on the watch too. Xcode → Window → Devices and Simulators should list
+   both as connected.
+4. **Generate, build and install.**
+   ```sh
+   xcodegen generate
+   xcodebuild -project Strand.xcodeproj -scheme NOOPiOS -configuration Release \
+     -destination 'platform=iOS,name=<your iPhone>' -allowProvisioningUpdates build
+   ```
+   Or open `Strand.xcodeproj` in Xcode, pick the **NOOPiOS** scheme and your iPhone, and Run. The watch
+   app is embedded in the iPhone app; install it from the Watch app on the phone (My Watch → NOOP →
+   Install) if it doesn't appear on its own.
+5. **First launch.** On the iPhone, connect the strap and allow Apple Health in NOOP's settings. On
+   the watch, the first **Start workout** asks for workout permission; allow it so live mode keeps
+   running with your wrist down.
+
+**How the two devices share the strap.** The strap accepts one connection at a time. The iPhone holds
+it day and night in the background. **Start workout** on the watch asks the phone to let go, then the
+watch reads the strap inside a workout session and sends its readings back to the phone every minute.
+**End workout** hands the strap back. If the watch goes silent for 10 minutes while it holds the strap,
+the phone takes it back by itself.
+
 > ℹ️ **Cross-platform engineering lives in [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)** — the shared-code
 > boundary across the macOS / iOS / Android clients, the `Platform.swift` shim convention, the
 > Swift↔Kotlin parity discipline, and the playbook for adding a feature across all three. Read that

@@ -10,10 +10,28 @@ final class WatchDirectBLEClient: NSObject, ObservableObject {
     private static let heartRateCharacteristic = CBUUID(string: "2A37")
     private static let batteryService = CBUUID(string: "180F")
     private static let batteryCharacteristic = CBUUID(string: "2A19")
+    /// Standard HR sensors advertise 0x180D. A WHOOP strap may advertise only its own service, so
+    /// scan for both families' primary services too; the HR characteristic is the same once connected.
+    private static let scanServices: [CBUUID] = [heartRateService]
+        + [DeviceFamily.whoop4, DeviceFamily.whoop5].map { CBUUID(string: $0.serviceUUIDString) }
+    private static let lastDeviceKey = "noop.watch.lastDeviceId"
+
+    /// Every plausible reading, with the time it arrived. The app buffers these for the phone.
+    var onHeartRate: ((Int, [Int], Date) -> Void)?
+    /// While a workout runs, an unexpected disconnect re-issues the connection instead of failing.
+    var keepConnected = false
 
     private var central: CBCentralManager!
     private var peripherals: [UUID: CBPeripheral] = [:]
+    /// The strap we connected (or are connecting) to. Kept outside `peripherals` so a rescan, which
+    /// clears the discovery list, can't make `stop()` forget to release a live link.
+    private var activePeripheral: CBPeripheral?
     private var intentionalStop = false
+
+    private var lastDeviceID: UUID? {
+        get { UserDefaults.standard.string(forKey: Self.lastDeviceKey).flatMap(UUID.init(uuidString:)) }
+        set { UserDefaults.standard.set(newValue?.uuidString, forKey: Self.lastDeviceKey) }
+    }
 
     override init() {
         super.init()
@@ -22,6 +40,10 @@ final class WatchDirectBLEClient: NSObject, ObservableObject {
 
     func startScan() {
         intentionalStop = false
+        if let active = activePeripheral, active.state == .connected || active.state == .connecting {
+            central.cancelPeripheralConnection(active)
+        }
+        activePeripheral = nil
         peripherals.removeAll()
         state.startScan()
 
@@ -33,7 +55,7 @@ final class WatchDirectBLEClient: NSObject, ObservableObject {
         }
 
         central.scanForPeripherals(
-            withServices: [Self.heartRateService],
+            withServices: Self.scanServices,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
     }
@@ -45,6 +67,8 @@ final class WatchDirectBLEClient: NSObject, ObservableObject {
         }
 
         central.stopScan()
+        lastDeviceID = device.id
+        activePeripheral = peripheral
         state.selectDevice(device)
         peripheral.delegate = self
         central.connect(peripheral, options: nil)
@@ -52,10 +76,12 @@ final class WatchDirectBLEClient: NSObject, ObservableObject {
 
     func stop() {
         intentionalStop = true
+        keepConnected = false
         central.stopScan()
-        if let peripheral = peripherals.values.first(where: { $0.state == .connected || $0.state == .connecting }) {
-            central.cancelPeripheralConnection(peripheral)
-        }
+        var toRelease = Set(peripherals.values.filter { $0.state == .connected || $0.state == .connecting })
+        if let active = activePeripheral { toRelease.insert(active) }
+        toRelease.forEach { central.cancelPeripheralConnection($0) }
+        activePeripheral = nil
         peripherals.removeAll()
         state.stop()
     }
@@ -82,10 +108,17 @@ final class WatchDirectBLEClient: NSObject, ObservableObject {
 extension WatchDirectBLEClient: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         Task { @MainActor in
+            // Bluetooth came back mid-workout: a connect issued while it was off was dropped.
+            if central.state == .poweredOn, self.keepConnected, !self.state.scanning,
+               let active = self.activePeripheral, active.state == .disconnected {
+                self.state.markReconnecting("Reconnecting to your strap.")
+                central.connect(active, options: nil)
+                return
+            }
             guard self.state.scanning else { return }
             if central.state == .poweredOn {
                 self.central.scanForPeripherals(
-                    withServices: [Self.heartRateService],
+                    withServices: Self.scanServices,
                     options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
                 )
             } else if central.state != .unknown && central.state != .resetting {
@@ -102,11 +135,22 @@ extension WatchDirectBLEClient: CBCentralManagerDelegate {
     ) {
         Task { @MainActor in
             self.peripherals[peripheral.identifier] = peripheral
-            self.state.upsertDiscoveredDevice(WatchDirectDevice(
+            let device = WatchDirectDevice(
                 id: peripheral.identifier,
                 displayName: self.displayName(for: peripheral, advertisementData: advertisementData),
                 rssi: RSSI.intValue
-            ))
+            )
+            self.state.upsertDiscoveredDevice(device)
+            guard self.state.scanning else { return }
+            // Reconnect to the strap used last time without making the user pick it again. On first
+            // use, pick a WHOOP strap automatically when it is the only one in range.
+            if peripheral.identifier == self.lastDeviceID {
+                self.connect(to: device)
+            } else if self.lastDeviceID == nil,
+                      device.displayName.localizedCaseInsensitiveContains("WHOOP"),
+                      self.state.discoveredDevices.filter({ $0.displayName.localizedCaseInsensitiveContains("WHOOP") }).count == 1 {
+                self.connect(to: device)
+            }
         }
     }
 
@@ -124,6 +168,14 @@ extension WatchDirectBLEClient: CBCentralManagerDelegate {
         error: Error?
     ) {
         Task { @MainActor in
+            // Ignore callbacks for a strap released by a rescan: chasing it would reconnect it behind
+            // `activePeripheral`'s back, and failing on it would knock the new scan into the error view.
+            guard !self.intentionalStop, peripheral === self.activePeripheral else { return }
+            if self.keepConnected {
+                self.state.markReconnecting("Couldn't reach your strap. Retrying.")
+                central.connect(peripheral, options: nil)
+                return
+            }
             self.state.fail(error?.localizedDescription ?? "Could not connect.")
         }
     }
@@ -134,7 +186,13 @@ extension WatchDirectBLEClient: CBCentralManagerDelegate {
         error: Error?
     ) {
         Task { @MainActor in
-            guard !self.intentionalStop else { return }
+            guard !self.intentionalStop, peripheral === self.activePeripheral else { return }
+            if self.keepConnected {
+                // A pending connect never times out, so this resumes as soon as the strap is back.
+                self.state.markReconnecting("Strap disconnected. Reconnecting.")
+                central.connect(peripheral, options: nil)
+                return
+            }
             self.state.fail(error?.localizedDescription ?? "Disconnected.")
         }
     }
@@ -193,19 +251,25 @@ extension WatchDirectBLEClient: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        // Copy the value and arrival time now: a burst of notifications can overwrite
+        // `characteristic.value` before the main-actor hop runs.
+        let bytes = characteristic.value.map { [UInt8]($0) }
+        let uuid = characteristic.uuid
+        let arrivedAt = Date()
         Task { @MainActor in
             if let error {
-                self.state.fail(error.localizedDescription)
+                // A failed read (e.g. battery) shouldn't tear down a working heart-rate stream.
+                if uuid == Self.heartRateCharacteristic { self.state.fail(error.localizedDescription) }
                 return
             }
-            guard let value = characteristic.value else { return }
-            let bytes = [UInt8](value)
+            guard let bytes else { return }
 
-            switch characteristic.uuid {
+            switch uuid {
             case Self.heartRateCharacteristic:
                 if let measurement = StandardHeartRateMeasurement.parse(bytes),
                    (30...220).contains(measurement.hr) {
                     self.state.receiveHeartRate(hr: measurement.hr, rr: measurement.rr)
+                    self.onHeartRate?(measurement.hr, measurement.rr, arrivedAt)
                 }
             case Self.batteryCharacteristic:
                 if let pct = bytes.first {

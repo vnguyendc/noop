@@ -286,9 +286,16 @@ public final class BLEManager: NSObject, ObservableObject {
         self.collector = nil
         super.init()
         state.lastSyncedAt = UserDefaults.standard.object(forKey: "lastSyncedAt") as? Double
-        // Restore identifier + background-capable central (foundation for M3 state restoration).
+        // Restore identifier + background-capable central (M3 state restoration). On iOS this lets the
+        // system relaunch NOOP to complete a pending connect or deliver strap data after it terminated
+        // the app (docs/IOS.md "Background BLE — what the iOS target must add").
         // Strand (macOS desktop): no state-restoration identifier (iOS background feature).
+        #if os(iOS)
+        central = CBCentralManager(delegate: self, queue: .main,
+                                   options: [CBCentralManagerOptionRestoreIdentifierKey: BLEManager.restoreID])
+        #else
         central = CBCentralManager(delegate: self, queue: .main)
+        #endif
         // Strap-as-clock: an incoming EVENT packet kicks a rate-limited catch-up sync.
         router.onSyncTrigger = { [weak self] in self?.requestSync(.strap) }
     }
@@ -413,6 +420,26 @@ public final class BLEManager: NSObject, ObservableObject {
             return
         }
         startScan(for: model, allowFallback: true)
+    }
+
+    /// Wait for the strap to come back without scanning. A pending connect to the known strap never
+    /// times out, and iOS completes it in the background (bluetooth-central) as soon as the strap
+    /// advertises again, for example when an Apple Watch that borrowed it lets go. Unlike a scan it
+    /// has no family-rotation timer, which would stop firing while the app is suspended. Falls back
+    /// to a normal scan when no strap is known yet.
+    public func awaitStrapReturn() {
+        guard central.state == .poweredOn, let p = peripheral else {
+            connect()
+            return
+        }
+        intentionalDisconnect = false
+        // Already back (or already connecting): leave the live link and its characteristics alone.
+        if p.state == .connected || p.state == .connecting { return }
+        cancelScanFallback()
+        central.stopScan()
+        preparePeripheral(p)
+        log("Waiting for \(selectedModel.displayName) to come back (pending connect \(p.identifier))")
+        central.connect(p, options: nil)
     }
 
     public func disconnect() {
@@ -1406,6 +1433,15 @@ extension BLEManager: CBCentralManagerDelegate {
                                didFailToConnect peripheral: CBPeripheral,
                                error: Error?) {
         log("Failed to connect\(error.map { " — \($0.localizedDescription)" } ?? "")")
+        // Nothing else re-issues a failed connect (only didDisconnect has a retry), so a single failure
+        // of the pending connect would leave the phone off the strap until relaunch. Skip when the bond
+        // was wiped: that needs the user to re-pair first (guide below).
+        if !intentionalDisconnect, (error as? CBError)?.code != .peerRemovedPairingInformation {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, !self.intentionalDisconnect else { return }
+                self.awaitStrapReturn()
+            }
+        }
         // The strap wiped its bond (a firmware update, or the official WHOOP app re-bonding it). macOS keeps
         // re-presenting the now-stale pairing key, so every reconnect loops on this same error with no
         // recovery and no user guidance. Surface an actionable re-pair guide instead of failing silently —

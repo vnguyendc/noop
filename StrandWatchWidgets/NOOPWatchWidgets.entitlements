@@ -4,7 +4,7 @@
 <dict>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.noopapp.noop.watch</string>
+		<string>$(WATCH_APP_GROUP_ID)</string>
 	</array>
 </dict>
 </plist>

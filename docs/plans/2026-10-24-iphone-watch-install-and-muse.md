@@ -110,7 +110,7 @@ flowchart LR
 - **Signing (R1, R8):** add `Config/Local.xcconfig` (git-ignored) with `DEVELOPMENT_TEAM` and `BUNDLE_ID_PREFIX`. `project.yml` then uses `$(BUNDLE_ID_PREFIX)` for the 4 bundle IDs, the App Groups, and `WKCompanionAppBundleIdentifier`, defaulting to `com.noopapp`. This avoids hard-coding the user's team into shared files. *Alternative:* edit the IDs in place on a personal fork. That is simpler but leaks into any upstream PR.
 - **Phone background (R2):** no new mechanism is planned. The existing restoration and auto-rescan get verified on device. Fixes happen only if R2 fails.
 - **Watch workout mode (R4):** replace "Start Live" with "Start Workout". It starts an `HKWorkoutSession` (activity type `other`), then the existing `WatchDirectBLEClient`. The `scenePhase` auto-stop is removed while a session runs. The existing `WatchDirectHandoffCoordinator` already disconnects and reconnects the phone. *Alternative:* `WKExtendedRuntimeSession`. Rejected because its session types are time-capped and do not fit open-ended workouts.
-- **Sample hand-back (R5):** the watch buffers `(timestamp, bpm, rr[])` in memory and flushes to a small file. On workout end it sends batches with `WCSession.transferUserInfo`, which queues delivery until the phone is reachable. The phone inserts through existing `WhoopStore` insert paths, keyed on timestamp, so duplicates are dropped. The codec lives in `StrandiOSShared` so the iOS test target can test it.
+- **Sample hand-back (R5):** the watch buffers `(timestamp, bpm, rr[])` in memory. Every 60 s, and on workout end, it sends batches with `WCSession.transferUserInfo`, which the system persists and delivers once the phone is reachable. *(r2 note: the buffer is not written to a file. A watch-app crash can lose up to the last 60 s of samples. That is disclosed as P3.)* The phone inserts through existing `WhoopStore` insert paths, keyed on timestamp, so duplicates are dropped. The codec lives in `StrandiOSShared` so the iOS test target can test it.
 - **UI (R3, R4):** keep the current single-scroll layout. Rename the score to Charge. Make the primary action one full-width button. Show workout state with elapsed time, large HR, R-R count, and battery. Use the system green/yellow/red Charge bands the app already uses.
 - **Muse (R6):** use NOOP's existing Apple Health write-back plus Muse's iPhone Apple Health connector. No code change unless verification finds a write-back defect.
 
@@ -135,3 +135,78 @@ flowchart LR
 - **UI/UX review:** `frontend-skill` + `frontend-design` review of the watch glance, workout, and complication screens, using rendered screenshots.
 - **Delivery:** a PR per D3 (default: a private fork, `feat/watch-always-connected` into the fork's `main`). No upstream PR, merge, or release without separate approval. Upstream CI (`app-build.yml`, `swift-packages.yml`) runs only if D3 = b.
 - **Risk to watch:** if T3 shows watchOS drops the strap link with the wrist down even inside a workout session, R4 falls back to "watch live view while the app is open". The phone stays the 24/7 collector either way.
+
+## Task and evidence record (updated during implementation)
+
+- **Stage:** implementation done and self-reviewed. Verification is **blocked** on device signing (see Blockers).
+- **Branch:** `feat/watch-always-connected` from `37b660a`. The June watch work is commit `1fbb607` and this plan is `9f07c10`. Later changes sit on top of those.
+- **Not in the candidate:** `Strand/Resources/Localizable.xcstrings` has an uncommitted Xcode re-extraction diff from before this task. It is left untouched and unstaged.
+
+### Checks run
+
+| Check | Result |
+|---|---|
+| `NOOPiOSTests` (iPhone 17 Pro simulator) | 22 tests, 0 failures. Covers sample batching and dedupe, the phone's 10-minute watch timeout, stale-message drop, app-group fallback, and the reconnecting state. |
+| `swift test` in the five packages | WhoopProtocol 156, WhoopStore 93, StrandAnalytics 213, StrandImport 88, StrandDesign 19. All pass. |
+| `xcodebuild` NOOPiOS (device, unsigned) and Strand (macOS) | Both build. |
+| Simulator: Ultra 3 (49 mm) watch paired with an iPhone 17 Pro | The phone-to-watch snapshot sync works. Not-synced, synced-empty, Bluetooth-failed and workout-permission states were rendered and inspected. |
+| Signed device build (`-allowProvisioningUpdates`) | **Blocked.** Xcode error: "Unable to log in with account 'vnguyendc@gmail.com'. The login details … were rejected." No signing identity is in the keychain. |
+
+### UI/UX review (frontend-skill + frontend-design, applied to watchOS)
+
+- **Approach:** one dominant number per screen (Charge on the glance, heart rate in the workout), utility copy, NOOP green as the single accent, and red only for the destructive action.
+- **Fixed during review:**
+  - The ring label was truncated ("Char…") and duplicated the heading. The label was removed.
+  - The watch and complication showed an invented Charge of 72 before the first sync. They now show dashes and "Open NOOP on your iPhone to sync."
+  - "End workout" inherited the green tint. It is now red.
+  - **P1:** a Bluetooth failure hid the live screen while the phone stayed disconnected. The screen now follows the session, with "Search again" and "End workout".
+- **Not yet seen rendered:** the connected heart-rate reading, the scanning list and the elapsed timer. The simulator has no Bluetooth, and the workout permission sheet needs a tap. These are covered on device.
+- **Evidence:** screenshots in the session scratchpad: `01-glance-not-synced.png`, `02-glance-synced.png`, `03-workout-start.png`, `05-live-bluetooth-failed.png`.
+
+### Independent review, round 1 (feature-dev code-reviewer agent; reads code only, cannot run it)
+
+Findings and resolutions:
+
+- **P1:** the phone's 10-minute timeout can't run while iOS has the app suspended after hand-off. **Fixed.** Once the watch holds the strap (or after a 25 s grace), the phone arms a pending Bluetooth connect to the known strap (`BLEManager.awaitStrapReturn`). The system completes it in the background the moment the watch lets go, for any reason.
+- **P2:** an out-of-order start or stop across the three delivery channels. **Fixed.** Changes are timestamped, and anything not newer than the last applied change is ignored.
+- **P2:** heartbeats kept flowing while the watch never held the strap. **Fixed.**
+  - Heartbeats are sent only while connected.
+  - A watch watchdog hands the strap back after 3 minutes without it.
+  - On first use, the watch auto-picks a strap when it is the only WHOOP in range.
+- **P2:** the phone skipped disconnecting when it was mid-reconnect. **Fixed.** It always lets go.
+- **P2:** no reconnect after a Bluetooth power cycle. **Fixed.**
+- **P2:** `stop()` could miss the live peripheral after a rescan. **Fixed.**
+- **P2:** an orphaned workout session after a watch-app relaunch. **Fixed** with a recovery handler that ends it.
+- **P3s fixed:**
+  - The value is copied in the Bluetooth callback.
+  - Main-thread access is fixed in the snapshot store.
+  - The post-workout snapshot no longer claims the iPhone holds the strap.
+  - An immediate restart after End now works.
+  - The macOS targets are pinned to no team.
+- **Also found while fixing:** the phone lacked the reply-less `didReceiveMessage` delegate, so the watch's wake-up messages were dropped. **Fixed.**
+- **Accepted P3s:**
+  - The watch buffer is memory-only.
+  - The phone ingest task has no background assertion.
+
+### Independent review, round 2 (same reviewer, on the fixed tree)
+
+- **P1:** after a fresh phone launch, the phone let go of the strap but did not count itself as wanting it back. **Fixed.** The phone is the 24/7 collector, so it always reclaims the strap after a watch session.
+- **P2:** the phone never passed its Bluetooth restore identifier, so `willRestoreState` was dead code and a pending connect died if iOS terminated the app. **Fixed.** The identifier is now passed on iOS only, as `docs/IOS.md` already specified. This is the riskiest change in the candidate, because it switches on a restore path that has never run. Device check R2 must cover it.
+- **P2:** a queued notice from an earlier session could arm the fallback early. **Fixed.**
+- **P2:** a failed pending connect was never retried. **Fixed** with a 3 s retry, skipped when the bond was wiped.
+- **P2:** the phone could win the strap after a watch link blip, and the watch was never told. **Fixed.** The phone now messages the watch, which ends its workout and shows why.
+- **P3s fixed:**
+  - The pending connect no longer touches a live link.
+  - The watch ignores callbacks for a strap released by a rescan.
+  - The grace check fits the background time iOS grants.
+- **Accepted P3s:**
+  - On first use, if the user takes more than 25 s to pick a strap that isn't auto-picked, the phone may take it back first.
+  - First-use auto-pick takes the only WHOOP-named strap in range.
+- **Checks after round 2:**
+  - `NOOPiOSTests`: 28 tests, 0 failures.
+  - The iOS + watch and macOS builds succeed with no new warnings.
+
+### Blockers
+
+1. **Re-sign in to Xcode** (Settings → Accounts → vnguyendc@gmail.com). Only the user can do this. It blocks R1, R2, R4, R5 on device, and R6.
+2. **Watch reachability:** the Watch Ultra 2 shows "unavailable" to Xcode. It must be unlocked, on its charger near the phone, with Developer Mode on.

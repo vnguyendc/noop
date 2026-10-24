@@ -3,7 +3,8 @@ import SwiftUI
 
 struct NOOPWatchEntry: TimelineEntry {
     let date: Date
-    let snapshot: WatchSnapshot
+    /// nil until the watch has synced once; the views show dashes rather than sample numbers.
+    let snapshot: WatchSnapshot?
 }
 
 struct NOOPWatchProvider: TimelineProvider {
@@ -12,11 +13,12 @@ struct NOOPWatchProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (NOOPWatchEntry) -> Void) {
-        completion(NOOPWatchEntry(date: Date(), snapshot: WatchSnapshot.loadForWatch() ?? .placeholder))
+        let snapshot = context.isPreview ? .placeholder : WatchSnapshot.loadForWatch()
+        completion(NOOPWatchEntry(date: Date(), snapshot: snapshot))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<NOOPWatchEntry>) -> Void) {
-        let snapshot = WatchSnapshot.loadForWatch() ?? .placeholder
+        let snapshot = WatchSnapshot.loadForWatch()
         let next = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date().addingTimeInterval(900)
         completion(Timeline(entries: [NOOPWatchEntry(date: Date(), snapshot: snapshot)], policy: .after(next)))
     }
@@ -26,15 +28,15 @@ struct NOOPWatchWidgetView: View {
     @Environment(\.widgetFamily) private var family
     let entry: NOOPWatchEntry
 
-    private var snapshot: WatchSnapshot { entry.snapshot }
+    private var snapshot: WatchSnapshot? { entry.snapshot }
 
     var body: some View {
         switch family {
         case .accessoryCircular:
-            Gauge(value: Double(snapshot.recovery ?? 0), in: 0...100) {
-                Image(systemName: "heart.fill")
+            Gauge(value: Double(snapshot?.recovery ?? 0), in: 0...100) {
+                Image(systemName: "bolt.heart.fill")
             } currentValueLabel: {
-                Text(snapshot.recovery.map(String.init) ?? "-")
+                Text(snapshot?.recovery.map(String.init) ?? "–")
             }
             .gaugeStyle(.accessoryCircular)
             .tint(recoveryColor)
@@ -42,27 +44,33 @@ struct NOOPWatchWidgetView: View {
             Text(inlineText)
         default:
             VStack(alignment: .leading, spacing: 2) {
-                Text("Recovery \(snapshot.recovery.map(String.init) ?? "-")%")
+                Text("Charge \(snapshot?.recovery.map(String.init) ?? "–")")
                     .font(.headline)
                     .foregroundStyle(recoveryColor)
-                Text("\(snapshot.bpm.map(String.init) ?? "-") bpm")
+                Text("\(snapshot?.bpm.map(String.init) ?? "–") bpm")
                     .font(.caption)
-                Text(snapshot.bonded ? "Strap connected" : "Strap offline")
+                Text(statusText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
+    private var statusText: String {
+        guard let snapshot else { return "Not synced yet" }
+        if snapshot.isStale() { return snapshot.updatedText() }
+        return snapshot.bonded ? "Strap connected" : "Strap offline"
+    }
+
     private var inlineText: String {
         var parts: [String] = []
-        if let recovery = snapshot.recovery { parts.append("Recovery \(recovery)%") }
-        if let bpm = snapshot.bpm { parts.append("\(bpm) bpm") }
-        return parts.isEmpty ? "NOOP" : parts.joined(separator: " · ")
+        if let recovery = snapshot?.recovery { parts.append("Charge \(recovery)") }
+        if let bpm = snapshot?.bpm { parts.append("\(bpm) bpm") }
+        return parts.isEmpty ? "NOOP" : parts.joined(separator: ", ")
     }
 
     private var recoveryColor: Color {
-        guard let recovery = snapshot.recovery else { return .secondary }
+        guard let recovery = snapshot?.recovery else { return .secondary }
         return recovery >= 67 ? .green : recovery >= 34 ? .yellow : .red
     }
 }
@@ -75,8 +83,8 @@ struct NOOPWatchWidget: Widget {
             NOOPWatchWidgetView(entry: entry)
                 .containerBackground(.black, for: .widget)
         }
-        .configurationDisplayName("NOOP Recovery")
-        .description("Recovery, heart rate, and strap state from your iPhone.")
+        .configurationDisplayName("NOOP Charge")
+        .description("Charge, heart rate, and strap state from your iPhone.")
         .supportedFamilies([.accessoryCircular, .accessoryInline, .accessoryRectangular])
     }
 }
