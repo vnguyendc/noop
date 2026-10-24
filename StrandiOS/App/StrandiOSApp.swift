@@ -23,6 +23,7 @@ struct StrandiOSApp: App {
         // "the widget doesn't show anything yet." No-op in Release.
         WidgetSnapshot.assertGroupProvisioned()
         let model = AppModel()
+        WatchSnapshotPublisher.shared.start(model: model)
         _model = StateObject(wrappedValue: model)
         _health = StateObject(wrappedValue: HealthKitBridge(
             repo: model.repo,
@@ -64,6 +65,7 @@ struct StrandiOSApp: App {
                 Task {
                     await health.sync()
                     WidgetSnapshot.publish(from: model)
+                    WatchSnapshotPublisher.shared.publish(from: model)
                 }
             } else if phase == .background {
                 // #155: refresh the Documents/noop_sync.txt drop file the user's Siri Shortcut logs

@@ -1266,9 +1266,9 @@ public final class BLEManager: NSObject, ObservableObject {
         log("Alarm: test buzz fired (patternId=2, runAlarm)")
     }
 
-    /// Parse a standard BLE Heart Rate Measurement (0x2A37) via the pure StandardHeartRate parser.
+    /// Parse a standard BLE Heart Rate Measurement (0x2A37) via the shared pure parser.
     private func parseStandardHR(_ data: [UInt8]) {
-        guard let m = StandardHeartRate.parse(data) else {
+        guard let m = StandardHeartRateMeasurement.parse(data) else {
             log("HR notify parse failed: \(hex(data))")
             return
         }

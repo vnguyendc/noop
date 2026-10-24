@@ -42,6 +42,39 @@ packages:
     path: Packages/StrandImport
   StrandDesign:
     path: Packages/StrandDesign
+schemes:
+  NOOPiOS:
+    build:
+      targets:
+        NOOPiOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  NOOPiOSWidgets:
+    build:
+      targets:
+        NOOPiOSWidgets: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  NOOPWatch:
+    build:
+      targets:
+        NOOPWatch: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  NOOPWatchWidgets:
+    build:
+      targets:
+        NOOPWatchWidgets: all
+    run:
+      config: Debug
+    archive:
+      config: Release
 targets:
   Strand:
     type: application
@@ -110,6 +143,18 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.strandtests
+
+  NOOPiOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - StrandiOSSharedTests
+      - StrandiOSShared
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop.tests
 
   # ---------------------------------------------------------------------------
   # iOS app target (community build-from-source; never distributed via the App
@@ -203,6 +248,7 @@ targets:
       - package: StrandDesign
       - package: MarkdownUI
       - target: NOOPiOSWidgets
+      - target: NOOPWatch
 
   # WidgetKit + Live Activity extension — the iOS analogue of the macOS menu-bar
   # extra. Reads a tiny snapshot the app publishes into the shared App Group.
@@ -235,3 +281,64 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
     dependencies:
       - package: StrandDesign
+
+  NOOPWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: StrandWatch
+        excludes:
+          - "Resources/NOOPWatch.entitlements"
+      - path: StrandiOSShared
+    info:
+      path: StrandWatch/Resources/Info.plist
+      properties:
+        CFBundleName: NOOP
+        CFBundleDisplayName: NOOP
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.noopapp.noop
+        NSBluetoothAlwaysUsageDescription: "NOOP connects directly to your WHOOP or heart-rate strap over Bluetooth to show live heart rate, R-R intervals, and battery on your Apple Watch. Nothing leaves your device."
+    entitlements:
+      path: StrandWatch/Resources/NOOPWatch.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.noopapp.noop.watch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop.watchkitapp
+        PRODUCT_NAME: NOOPWatch
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: WhoopProtocol
+      - target: NOOPWatchWidgets
+
+  NOOPWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: StrandWatchWidgets
+        excludes:
+          - "NOOPWatchWidgets.entitlements"
+      - path: StrandiOSShared
+    info:
+      path: StrandWatchWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: NOOP
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: StrandWatchWidgets/NOOPWatchWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.noopapp.noop.watch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop.watchkitapp.widgets
+        PRODUCT_NAME: NOOPWatchWidgets
+        GENERATE_INFOPLIST_FILE: NO
