@@ -277,6 +277,8 @@ targets:
       path: StrandiOSWidgets/Info.plist
       properties:
         CFBundleDisplayName: NOOP
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NOOPAppGroupID: $(APP_GROUP_ID)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
