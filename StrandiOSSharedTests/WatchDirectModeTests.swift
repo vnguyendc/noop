@@ -53,6 +53,33 @@ final class WatchDirectModeTests: XCTestCase {
 final class WatchDirectLivenessTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
 
+    /// WHOOP 5.0: the phone stays connected and the watch connects alongside it. Before the fix the
+    /// phone let go, re-armed its pending connect, got straight back in while the watch was still
+    /// connected, and told the watch it had taken the strap back, which ended the workout.
+    func testStrapThatTakesTwoConnectionsIsNeverHandedOver() {
+        var coordinator = WatchDirectHandoffCoordinator()
+        XCTAssertEqual(coordinator.apply(watchDirectModeActive: true, phoneWantsStrap: true,
+                                         strapAcceptsSecondConnection: true, at: t0, now: t0), .none)
+        XCTAssertFalse(coordinator.watchDirectModeActive)
+
+        XCTAssertEqual(coordinator.watchHoldsStrap(at: t0.addingTimeInterval(2)), .none)
+        XCTAssertEqual(coordinator.armFallbackIfDue(now: t0.addingTimeInterval(30)), .none)
+        XCTAssertFalse(coordinator.phoneReconnected(), "the phone's own connection is not the watch letting go")
+        XCTAssertEqual(coordinator.expireIfWatchSilent(now: t0.addingTimeInterval(60 * 60)), .none)
+        XCTAssertEqual(coordinator.apply(watchDirectModeActive: false, phoneWantsStrap: true,
+                                         strapAcceptsSecondConnection: true,
+                                         at: t0.addingTimeInterval(30 * 60), now: t0.addingTimeInterval(30 * 60)), .none)
+    }
+
+    /// The one-connection hand-off still reports a reclaim, so the watch can end its workout.
+    func testOneConnectionStrapStillReportsReclaim() {
+        var coordinator = WatchDirectHandoffCoordinator()
+        XCTAssertEqual(coordinator.apply(watchDirectModeActive: true, phoneWantsStrap: true, at: t0, now: t0), .disconnectPhone)
+        XCTAssertEqual(coordinator.watchHoldsStrap(at: t0.addingTimeInterval(2)), .armPhoneFallback)
+        XCTAssertTrue(coordinator.phoneReconnected())
+        XCTAssertFalse(coordinator.watchDirectModeActive)
+    }
+
     func testSilentWatchHandsStrapBackToPhone() {
         var coordinator = WatchDirectHandoffCoordinator()
         XCTAssertEqual(coordinator.apply(watchDirectModeActive: true, phoneWantsStrap: true, now: t0), .disconnectPhone)

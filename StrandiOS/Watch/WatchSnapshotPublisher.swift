@@ -236,6 +236,7 @@ final class WatchSnapshotPublisher: NSObject, WCSessionDelegate {
                 // (Connection state can't decide this: a freshly relaunched phone reads as
                 // not-connected and not-bonded even when it normally holds the strap.)
                 phoneWantsStrap: true,
+                strapAcceptsSecondConnection: WhoopModel.persisted.acceptsSecondConnection,
                 at: change.at,
                 now: Date()
             ))

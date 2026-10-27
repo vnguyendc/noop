@@ -77,11 +77,38 @@ works too, but re-signs every 7 days and won't get HealthKit.
    the watch, the first **Start workout** asks for workout permission; allow it so live mode keeps
    running with your wrist down.
 
-**How the two devices share the strap.** The strap accepts one connection at a time. The iPhone holds
-it day and night in the background. **Start workout** on the watch asks the phone to let go, then the
-watch reads the strap inside a workout session and sends its readings back to the phone every minute.
-**End workout** hands the strap back. If the watch goes silent for 10 minutes while it holds the strap,
-the phone takes it back by itself.
+**How the two devices share the strap.** The iPhone holds the strap day and night in the background.
+**Start workout** on the watch reads the strap inside a workout session and sends its readings back to
+the phone every minute.
+- **WHOOP 5.0 / MG:** the strap accepts a second connection, so the phone stays connected and the watch
+  connects alongside it. **End workout** just disconnects the watch.
+- **WHOOP 4.0:** the strap accepts one connection at a time, so the phone lets go while the watch has
+  it. **End workout** hands the strap back. If the watch goes silent for 10 minutes while it holds the
+  strap, the phone takes it back by itself.
+
+### Install through TestFlight (when the watch can't run development builds)
+
+A watch that Xcode has never connected to can't turn on Developer Mode, and isn't in your development
+profiles, so a development build installs on the iPhone but not on the watch. TestFlight needs
+neither, and a TestFlight build installs on both.
+
+1. **Archive**, raising the build number above the last upload:
+   ```sh
+   xcodegen generate
+   xcodebuild archive -project Strand.xcodeproj -scheme NOOPiOS -configuration Release \
+     -destination 'generic/platform=iOS' -archivePath NOOP.xcarchive -allowProvisioningUpdates \
+     CURRENT_PROJECT_VERSION=<next build number>
+   ```
+2. **Upload.** Copy the archive into `~/Library/Developer/Xcode/Archives/<date>/`, then Xcode →
+   Window → Organizer → select it → **Distribute App** → **TestFlight Internal Only**. The first upload
+   creates the App Store Connect record. The app name must be unique across the App Store, and it is
+   not the name shown on the device.
+3. **Release to yourself.** In App Store Connect → your app → TestFlight, answer the encryption
+   question once per build, then add the build to an internal testing group that includes you.
+4. **Install.** Install the build from the TestFlight app on the iPhone. The watch app installs from
+   the Watch app (My Watch → Available Apps), or on its own.
+
+TestFlight builds expire after 90 days. Repeat these steps with a higher build number before then.
 
 > ℹ️ **Cross-platform engineering lives in [`CROSS_PLATFORM.md`](CROSS_PLATFORM.md)** — the shared-code
 > boundary across the macOS / iOS / Android clients, the `Platform.swift` shim convention, the

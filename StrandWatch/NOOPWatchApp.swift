@@ -57,6 +57,9 @@ final class WatchLiveModel: ObservableObject {
         }
         store.onPhoneReclaimedStrap = { [weak self] at in
             guard let self, self.isLive, at > self.liveStartedAt else { return }   // ignore older sessions
+            // Still connected: the strap took the phone as a second connection without dropping the
+            // watch, so the phone didn't take anything back.
+            guard !self.client.state.connected else { return }
             self.stop(reason: "Your iPhone took the strap back after the watch lost it.")
         }
         client.$state

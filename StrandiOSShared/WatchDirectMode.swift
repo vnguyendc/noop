@@ -113,7 +113,7 @@ public enum WatchDirectHandoffAction: Equatable {
     case reconnectPhone
 }
 
-/// Phone-side bookkeeping for the watch borrowing the strap (the strap holds one connection).
+/// Phone-side bookkeeping for the watch borrowing the strap (a WHOOP 4.0 holds one connection).
 ///
 /// Sequence: the watch says "start" → the phone disconnects. Once the watch holds the strap (or a
 /// short grace period passes), the phone arms a pending connect, which the system completes even
@@ -121,6 +121,10 @@ public enum WatchDirectHandoffAction: Equatable {
 /// immediately. If the watch goes silent while the phone app is awake, `expireIfWatchSilent` also
 /// hands the strap back. Changes carry the watch's timestamp so a late or duplicate message from an
 /// older change is ignored.
+///
+/// A strap that accepts a second connection (WHOOP 5.0) is never handed over: the watch connects
+/// alongside the phone. Handing it over anyway would let the phone's pending connect complete while
+/// the watch still holds the strap, which `phoneReconnected` would read as the watch letting go.
 public struct WatchDirectHandoffCoordinator: Equatable {
     /// The watch sends a heartbeat every minute while it holds the strap.
     public static let livenessTimeout: TimeInterval = 10 * 60
@@ -140,9 +144,12 @@ public struct WatchDirectHandoffCoordinator: Equatable {
     ///   - phoneWantsStrap: whether the phone should take the strap back afterwards (it was
     ///     connected or paired). The phone always lets go on "start", connected or not, so a scan or
     ///     reconnect in flight can't grab the strap from the watch.
+    ///   - strapAcceptsSecondConnection: the watch can connect without the phone letting go, so
+    ///     "start" changes nothing on the phone.
     ///   - at: when the watch made the change, if the message carried it.
     public mutating func apply(watchDirectModeActive active: Bool,
                                phoneWantsStrap: Bool,
+                               strapAcceptsSecondConnection: Bool = false,
                                at: Date? = nil,
                                now: Date = Date()) -> WatchDirectHandoffAction {
         if let at {
@@ -150,6 +157,7 @@ public struct WatchDirectHandoffCoordinator: Equatable {
             lastChangeAt = at
         }
         if active {
+            guard !strapAcceptsSecondConnection else { return .none }
             guard !watchDirectModeActive else {
                 noteWatchActivity(at: at ?? now)
                 return .none

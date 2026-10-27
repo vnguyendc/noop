@@ -83,6 +83,33 @@ flowchart LR
 - **R6 mechanism changed from a local MCP server to Apple Health.** Inspecting Muse 9.0 (`com.meta.endo`) showed no way to register a local stdio MCP server. Its "custom connectors" are API-key or OAuth cloud services, and its local connectors are built in. It does ship an **Apple Health connector**, and its own UI text says: "Apple Health is only on iPhone. Open the app on your iPhone to connect or manage it." NOOP's iPhone app already writes daily resting HR, HRV (SDNN), SpO₂ and respiratory rate into Apple Health, deduplicated per day. So R6 becomes: sign with HealthKit (D2), turn on NOOP's Apple Health write-back, connect Muse's Apple Health connector on the iPhone, and confirm Muse answers from NOOP-written data. No new server code. This narrows scope and adds no new data path beyond the one the user chose in D1.
 - **R6 limitation:** Charge, Effort and Rest have no Apple Health type, so Muse will not see those scores directly. It sees the underlying vitals plus the Apple Watch's own data.
 
+## Revision r3 (2026-10-27, approved)
+
+Approved by the user on 2026-10-27: "approved, go ahead with r3".
+
+
+Two facts from the real devices change the plan. The strap is a **WHOOP 5.0** ("VINHS WHOOP"), not the 4.0 from the Mac database. The watch is a new **Apple Watch Ultra 4** (Watch8,1), not the Ultra 2. Both items listed as out of scope, WHOOP 5.0 specifics and TestFlight, are now in scope.
+
+**Install route: TestFlight.** The user approved it on 2026-10-27 ("yes test flight please"). The Ultra 4 can't run development builds: it was never seen by Xcode, so Developer Mode can't be enabled, and it isn't in the team's profiles. Build 2.8.6 (50) is uploaded and installed on both devices through TestFlight. To pass App Store validation it needed opaque full-bleed iOS and watch icons (`Tools/make_icon.py` now writes `noop_icon_ios_1024.png`), a single 1024 watch icon, and matching widget build numbers. TestFlight builds expire after 90 days, so a refresh means bumping `CURRENT_PROJECT_VERSION`, archiving and uploading again.
+
+**Defect found during R4: the watch workout ends a few seconds after it starts.**
+- *Symptom:* tap Start workout on the watch. It connects briefly, then shows "Your iPhone took the strap back after the watch lost it."
+- *Evidence from the phone strap log:* this happened four times (13:54:05, 13:54:12, 13:57:03, 13:57:07). Each time the phone let go ("Disconnected (intentional)"). 1 to 3 s later it set up its pending connect, and that connect completed in the same second.
+- *Evidence from a second central:* a read-only CoreBluetooth probe on the Mac (14:00:13 to 14:00:53) found the strap advertising as connectable. It connected as a second central and received 35 standard HR notifications, with R-R intervals. The phone was almost certainly still connected at the time; the log copied at 13:57 shows it connected.
+- *Root cause:* `WatchDirectHandoffCoordinator` assumes the strap accepts one connection at a time. So when the phone's pending connect completes, it reads that as "the watch let go" (`phoneReconnected()`), tells the watch, and the watch ends its workout. The WHOOP 5.0 accepts a second connection, so the phone reconnects while the watch is still connected. This assumption was never checked, and is unverified for the 4.0 too.
+
+**Proposed fix (small, covered by tests):**
+1. **Phone:** when the selected strap is a WHOOP 5.0/MG, don't hand the strap over when the watch starts a workout. The phone stays connected and keeps collecting, and the watch connects alongside it. Samples from both land in the same history, and inserts already dedupe to one row per second. The 4.0 path is unchanged.
+2. **Watch:** ignore the phone's "took the strap back" notice while the watch itself is connected to the strap. With a one-connection strap the phone can't reconnect while the watch holds it, so this only removes the false positive.
+3. **Tests:** add coordinator tests for "shared strap: start/stop is a no-op and never reports a reclaim", alongside the existing 4.0 tests.
+4. **Rebuild** as 2.8.6 (51) and upload to TestFlight the same way.
+
+**Requirement changes:**
+- **R4:** for a WHOOP 5.0/MG, the phone stays connected during a watch workout instead of disconnecting. Both devices stay connected. The watch records HR and R-R with the wrist down for 30 min or more, and End workout leaves the phone's connection untouched. For the 4.0 nothing changes.
+- **R1:** "Watch Ultra 2" becomes "Watch Ultra 4", installed via TestFlight.
+
+**Not changed:** the 25 s grace before a 4.0 phone re-arms is short for a first-time strap tap on the watch. This is P2, recorded here and not fixed, because the user's strap is a 5.0.
+
 ## Context
 
 - **Classification:** feature (watch companion completion + install), plus configuration (signing), plus an integration (Muse, scope pending D1). Severity: not a defect. Urgency is set by when the user wants to cancel.
@@ -138,7 +165,7 @@ flowchart LR
 
 ## Task and evidence record (updated during implementation)
 
-- **Stage:** implementation done and self-reviewed. Verification is **blocked** on device signing (see Blockers).
+- **Stage:** verification in progress. The signed iPhone install is done (2026-10-26). The watch install and the on-device checks R2 to R6 are waiting on the user (see Blockers).
 - **Branch:** `feat/watch-always-connected` from `37b660a`. The June watch work is commit `1fbb607` and this plan is `9f07c10`. Later changes sit on top of those.
 - **Not in the candidate:** `Strand/Resources/Localizable.xcstrings` has an uncommitted Xcode re-extraction diff from before this task. It is left untouched and unstaged.
 
@@ -151,6 +178,14 @@ flowchart LR
 | `xcodebuild` NOOPiOS (device, unsigned) and Strand (macOS) | Both build. |
 | Simulator: Ultra 3 (49 mm) watch paired with an iPhone 17 Pro | The phone-to-watch snapshot sync works. Not-synced, synced-empty, Bluetooth-failed and workout-permission states were rendered and inspected. |
 | Signed device build (`-allowProvisioningUpdates`) | **Blocked.** Xcode error: "Unable to log in with account 'vnguyendc@gmail.com'. The login details … were rejected." No signing identity is in the keychain. |
+| Signed device build, 2026-10-26, Xcode 27.1 (`-allowProvisioningUpdates`, iPhone 17 Pro) | **Succeeds.** All four bundles are signed by team `LNXKQ7ULUL`: `com.vnguyendc.noop`, `.widgets`, `.watchkitapp` and `.watchkitapp.widgets`. Entitlements: HealthKit on the phone and watch apps; App Groups `group.com.vnguyendc.noop` and `.noop.watch`. Info keys: phone `UIBackgroundModes` = bluetooth-central; watch `WKBackgroundModes` = workout-processing and `WKCompanionAppBundleIdentifier` = `com.vnguyendc.noop`. Earlier attempts failed with `No Account for Team "LNXKQ7ULUL"` because the team's Apple Developer membership had lapsed. The user renewed it. |
+| Install on iPhone (`devicectl device install app`) | **Installed.** `com.vnguyendc.noop` 2.8.6 is on the iPhone 17 Pro. The watch was "unavailable" to the Mac, so the watch app is installed from the iPhone's Watch app instead (it is embedded in `NOOP.app/Watch`). |
+| Re-run on Xcode 27.1 (Xcode updated itself on 2026-10-24) | `NOOPiOSTests` 28 tests, 0 failures. `swift test`: WhoopProtocol 156, WhoopStore 93, StrandAnalytics 213, StrandImport 88, StrandDesign 19. All pass. The device build shows no new warnings; only the existing BLEManager actor-isolation notes and a watch app-icon "unassigned child" warning. |
+| TestFlight build 2.8.6 (50), 2026-10-27 | **Uploaded and installed.** Release archive with opaque 1024 icons for the phone and the watch, all four bundles at 2.8.6 (50), and no icon warnings. `xcodebuild -exportArchive` failed with "No Accounts" both inside and outside the sandbox, although the account is signed in to Xcode. The user uploaded from Organizer instead (TestFlight Internal Only); the log says "UPLOAD SUCCEEDED with no errors", delivery `49edb6b0-8732-4cbd-877a-ff058bdd25bc`. The App Store Connect record "NOOP Vinh" (6827622152) was created; "NOOP" was taken by another account. Installed through TestFlight on the iPhone and the Ultra 4. |
+| R4 on device, build 50, 2026-10-27 | **Failed.** Start workout on the watch: the watch connected briefly, then showed "Your iPhone took the strap back after the watch lost it." The phone strap log shows 4 attempts, each with the pending connect re-armed 1 to 3 s after letting go and completing immediately. Root cause: see r3. |
+| Second-central probe from the Mac, 2026-10-27 14:00 | The WHOOP 5.0 advertised as connectable (service 180D) and accepted the Mac as a second central: 35 HR notifications in 35 s, R-R included, then a clean disconnect. |
+| r3 fix: `NOOPiOSTests` (iPhone 17 Pro simulator) | 30 tests, 0 failures. That is the 28 existing plus `testStrapThatTakesTwoConnectionsIsNeverHandedOver` and `testOneConnectionStrapStillReportsReclaim`. With the coordinator guard removed, the first new test fails with 4 assertions (`disconnectPhone`, then `armPhoneFallback`, then a reported reclaim). So it reproduces the bug. |
+| r3 fix: Release archive 2.8.6 (51) and macOS `Strand` build | Both succeed. All four bundles are at 2.8.6 (51). The changed files add no new warnings. The packages are unchanged since the last `swift test` run (569 tests, all pass). |
 
 ### UI/UX review (frontend-skill + frontend-design, applied to watchOS)
 
@@ -208,5 +243,5 @@ Findings and resolutions:
 
 ### Blockers
 
-1. **Re-sign in to Xcode** (Settings → Accounts → vnguyendc@gmail.com). Only the user can do this. It blocks R1, R2, R4, R5 on device, and R6.
+1. ~~**Re-sign in to Xcode**~~ Resolved 2026-10-26: the user signed in and renewed the RevitalizedAI membership. What remains needs the user's hands: install the watch app from the iPhone's Watch app, finish onboarding and pair the strap, turn on Apple Health in NOOP and in Muse, and run a watch workout. These block R1 (watch), R2, R4, R5 and R6.
 2. **Watch reachability:** the Watch Ultra 2 shows "unavailable" to Xcode. It must be unlocked, on its charger near the phone, with Developer Mode on.
