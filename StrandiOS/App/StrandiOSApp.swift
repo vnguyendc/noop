@@ -55,14 +55,15 @@ struct StrandiOSApp: App {
         }
         // HealthKit authorization is intentionally NOT requested on launch. The system permission
         // dialog without prior in-app rationale violates Apple HIG / App Review guidance — the user
-        // sees the prompt before any context. Authorization should be triggered from an explicit
-        // user action: an "Enable Apple Health" row in Settings, or a dedicated step in
-        // OnboardingWizard. HealthKitBridge.sync below guards on `auth == .authorized`, so the
-        // scenePhase trigger is a safe no-op until the user opts in.
+        // sees the prompt before any context. It is requested from the Connect Apple Health card on
+        // the Apple Health screen. `refreshAuthorization` only reads back an earlier answer (no
+        // prompt), and HealthKitBridge.sync guards on `auth == .authorized`, so the scenePhase
+        // trigger is a safe no-op until the user opts in.
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 model.drainPendingIntents()
                 Task {
+                    await health.refreshAuthorization()
                     await health.sync()
                     WidgetSnapshot.publish(from: model)
                     WatchSnapshotPublisher.shared.publish(from: model)

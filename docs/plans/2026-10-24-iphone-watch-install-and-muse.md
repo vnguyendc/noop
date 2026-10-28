@@ -110,6 +110,40 @@ Two facts from the real devices change the plan. The strap is a **WHOOP 5.0** ("
 
 **Not changed:** the 25 s grace before a 4.0 phone re-arms is short for a first-time strap tap on the watch. This is P2, recorded here and not fixed, because the user's strap is a 5.0.
 
+## Revision r4 (2026-10-28, approved)
+
+Approved by the user on 2026-10-28: "approved, go ahead with r4".
+
+
+**Finding: NOOP's iPhone app never asks for Apple Health permission, so nothing reaches Apple Health or Muse.**
+- `HealthKitBridge.requestAuthorization()` exists, but nothing in the iOS app calls it. A repo-wide search finds only its definition.
+- `HealthKitBridge.sync()` does both the import and the write-back, and it returns immediately unless `auth == .authorized`. So it never runs.
+- `auth` lives only in memory, so even a granted permission would be forgotten on relaunch.
+- The Apple Health screen tells iPhone users to export and import a .zip instead.
+- r2's statement that NOOP "already writes" resting HR, HRV, SpO₂ and respiratory rate to Apple Health was wrong. The code exists but can't be reached. As built, R6 cannot pass.
+
+**Proposed fix (needed for R6, iPhone only):**
+1. **Connect card on the Apple Health screen.** Add a card at the top of the screen (More → Data → Apple Health).
+   - *Not connected:* one sentence saying what NOOP reads and what it saves, and a **Connect Apple Health** button. The button opens the system permission sheet, then syncs.
+   - *Connected:* "Connected to Apple Health" with the last sync time, and the last error in orange if there is one.
+   - *Empty state:* on iPhone it points at Connect rather than the export and import steps.
+   - This asks for permission only on a tap, after explaining why, which follows Apple's guidance and the existing code comment.
+2. **Remember the permission.** At launch the bridge checks HealthKit's *write* authorization for NOOP's four write types. If any is granted it treats Health as connected, so syncing carries on after a relaunch. HealthKit never reveals read permission, but write status is visible.
+3. **Tests:** cover the launch-time status decision as a pure function.
+4. **Rebuild** as 2.8.6 (52) and upload to TestFlight.
+
+**Limits (unchanged code paths):**
+- The sync runs when NOOP comes to the foreground. Apple Health, and so Muse, gets each day's values the next time NOOP is opened, not in the background.
+- Muse sees only the four daily vitals (see r2).
+
+**UI/UX research:** Mobbin still requires a paid plan (checked again 2026-10-28), and Refero was not used. The design follows Apple's HealthKit guidance: explain before asking, and ask only on a user action. It reuses the existing `NoopCard` and `StrandFont` tokens. The rendered screen gets the frontend-skill and frontend-design review before the PR.
+
+**R6 check after the fix:**
+1. Connect in NOOP.
+2. Health app → Browse → Heart → Resting Heart Rate → Data Sources & Access lists NOOP, and the values match NOOP.
+3. Connect Muse's Apple Health connector on the iPhone.
+4. Ask Muse about this week's resting HR and HRV. The answer matches NOOP.
+
 ## Context
 
 - **Classification:** feature (watch companion completion + install), plus configuration (signing), plus an integration (Muse, scope pending D1). Severity: not a defect. Urgency is set by when the user wants to cancel.
@@ -186,6 +220,10 @@ Two facts from the real devices change the plan. The strap is a **WHOOP 5.0** ("
 | Second-central probe from the Mac, 2026-10-27 14:00 | The WHOOP 5.0 advertised as connectable (service 180D) and accepted the Mac as a second central: 35 HR notifications in 35 s, R-R included, then a clean disconnect. |
 | r3 fix: `NOOPiOSTests` (iPhone 17 Pro simulator) | 30 tests, 0 failures. That is the 28 existing plus `testStrapThatTakesTwoConnectionsIsNeverHandedOver` and `testOneConnectionStrapStillReportsReclaim`. With the coordinator guard removed, the first new test fails with 4 assertions (`disconnectPhone`, then `armPhoneFallback`, then a reported reclaim). So it reproduces the bug. |
 | r3 fix: Release archive 2.8.6 (51) and macOS `Strand` build | Both succeed. All four bundles are at 2.8.6 (51). The changed files add no new warnings. The packages are unchanged since the last `swift test` run (569 tests, all pass). |
+| R4 on device, build 51 (TestFlight, uploaded 2026-10-27 15:47, delivery `c830fbe0-c1d5-4c7e-a34d-eeca3048fb07`) | **Pass, by the user's report** ("yes awesome it works!", 2026-10-28). Start workout on the Ultra 4 stayed live, and End workout returned to the normal screen. No screenshots or strap log came with it, so there is no independent record. |
+| r4 fix: `NOOPiOSTests` (iPhone 17 Pro simulator) | 35 tests, 0 failures. That is the 30 from r3 plus 5 `AppleHealthConnectionTests`: no Health, never asked, granted earlier, asked but saving denied, and a new type to ask for after an update. |
+| r4 fix: Release archive 2.8.6 (52), macOS `Strand` build, simulator Debug build | All succeed. All four bundles are at 2.8.6 (52), and the phone app keeps the HealthKit entitlement. The changed files add no new warnings; the remaining ones (one deprecated `onChange` on the range control, two unused `try?`, two `dayString` isolation) were already there. Self-review fix: write-back now saves only the types the user allowed, because a partial grant would otherwise make HealthKit reject the whole save. |
+| r4 rendered UI in the simulator | **Blocked.** Computer use was held by another Claude session (84ed9e52), so the simulator couldn't be tapped past the What's new sheet to the Apple Health screen. The rendered review moves to the user's device screenshots of build 52. |
 
 ### UI/UX review (frontend-skill + frontend-design, applied to watchOS)
 
