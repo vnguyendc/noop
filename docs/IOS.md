@@ -92,6 +92,16 @@ A watch that Xcode has never connected to can't turn on Developer Mode, and isn'
 profiles, so a development build installs on the iPhone but not on the watch. TestFlight needs
 neither, and a TestFlight build installs on both.
 
+**Scripted:** `Tools/testflight.py` archives, uploads, waits for processing and releases the build to
+your internal testers. It needs an App Store Connect API key (Admin access, downloaded as a .p8 file)
+and `Config/TestFlight.env` (copy `Config/TestFlight.env.example`). Create the App Store Connect app
+record once, turn on **Automatic Updates** for the app in TestFlight on the iPhone, and every later
+run installs on the phone and watch by itself. The iPhone app's Info.plist declares
+`ITSAppUsesNonExemptEncryption = NO`, so App Store Connect doesn't ask the encryption question per
+build. Change that if you add your own encryption.
+
+**By hand:**
+
 1. **Archive**, raising the build number above the last upload:
    ```sh
    xcodegen generate

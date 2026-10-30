@@ -75,3 +75,5 @@ __pycache__/
 
 # ── Personal signing override (see Config/Local.xcconfig.example) ──
 Config/Local.xcconfig
+# App Store Connect API key IDs for Tools/testflight.py (see Config/TestFlight.env.example)
+Config/TestFlight.env

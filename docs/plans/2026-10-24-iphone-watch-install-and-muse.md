@@ -144,6 +144,36 @@ Approved by the user on 2026-10-28: "approved, go ahead with r4".
 3. Connect Muse's Apple Health connector on the iPhone.
 4. Ask Muse about this week's resting HR and HRV. The answer matches NOOP.
 
+## Revision r5 (2026-10-29, approved)
+
+Approved by the user on 2026-10-29 ("yes"). They also created API key `HZNAHNPC3A` and downloaded it as a file, which checks as a valid private key without being printed.
+
+
+The user asked: "can we do the upload and install programatically? so i dont have to do manual steps".
+
+**What becomes automatic:**
+1. **Upload: `Tools/testflight.sh`.** The script:
+   - Archives the app.
+   - Uploads it with an App Store Connect API key (`xcodebuild -exportArchive`, `destination=upload`). Xcode picks the next build number itself (`manageAppVersionAndBuildNumber`).
+   - Waits until App Store Connect finishes processing.
+   - Adds the build to the internal testing group, if the group doesn't pick it up automatically.
+   - Takes the key ID, issuer ID and key path from the environment or a git-ignored config, and never prints the key.
+2. **Encryption question: answered in the app.** Set `ITSAppUsesNonExemptEncryption = NO` in the iPhone app's Info.plist. This is the same answer the user gave for builds 50 to 52: only Apple's standard HTTPS, no custom cryptography. App Store Connect then stops asking. It remains the user's declaration to Apple.
+3. **Install: TestFlight automatic updates.** A one-time toggle in TestFlight on the iPhone, so each new build installs by itself. The watch app updates with the iPhone app. Timing is up to iOS, and opening TestFlight speeds it up.
+
+**One-time steps that stay with the user:**
+- Create an App Store Connect API key (Admin) and **download** the .p8 file. Don't copy its text.
+- Turn on Automatic Updates for NOOP Vinh in TestFlight.
+
+**Not possible:** installing a TestFlight build with `devicectl`. That only installs development builds, and the watch can't run those.
+
+**Check:** run the script once, upload build 52, then confirm:
+- The build shows as ready to test with no compliance prompt.
+- It appears in the TestFlight app.
+- It installs on its own.
+
+**Fallback:** if API-key signing fails (for example because the key can't create a distribution certificate), the Organizer upload still works.
+
 ## Context
 
 - **Classification:** feature (watch companion completion + install), plus configuration (signing), plus an integration (Muse, scope pending D1). Severity: not a defect. Urgency is set by when the user wants to cancel.
@@ -224,6 +254,8 @@ Approved by the user on 2026-10-28: "approved, go ahead with r4".
 | r4 fix: `NOOPiOSTests` (iPhone 17 Pro simulator) | 35 tests, 0 failures. That is the 30 from r3 plus 5 `AppleHealthConnectionTests`: no Health, never asked, granted earlier, asked but saving denied, and a new type to ask for after an update. |
 | r4 fix: Release archive 2.8.6 (52), macOS `Strand` build, simulator Debug build | All succeed. All four bundles are at 2.8.6 (52), and the phone app keeps the HealthKit entitlement. The changed files add no new warnings; the remaining ones (one deprecated `onChange` on the range control, two unused `try?`, two `dayString` isolation) were already there. Self-review fix: write-back now saves only the types the user allowed, because a partial grant would otherwise make HealthKit reject the whole save. |
 | r4 rendered UI in the simulator | **Blocked.** Computer use was held by another Claude session (84ed9e52), so the simulator couldn't be tapped past the What's new sheet to the Apple Health screen. The rendered review moves to the user's device screenshots of build 52. |
+| r5: `Tools/testflight.py`, first run 2026-10-29 21:11 | **Uploaded, wrong number.** The API key (HZNAHNPC3A, Admin) signed and uploaded from the command line, which the Xcode account login never managed. But Xcode's `manageAppVersionAndBuildNumber` kept the project's own build number (49), and App Store Connect accepted it. 49 is below the installed 51, so TestFlight never offered it. Fix: the script reads the highest build number from App Store Connect and passes `CURRENT_PROJECT_VERSION=<max+1>`. |
+| r5: second run 2026-10-29 | **Pass.** Build 52 uploaded, processed (`VALID`) and released through the "Me" group, which gets every build. `usesNonExemptEncryption` was already `false` on the build, so no compliance prompt. Install on the iPhone and watch is still the user's to confirm. |
 
 ### UI/UX review (frontend-skill + frontend-design, applied to watchOS)
 
