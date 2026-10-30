@@ -32,6 +32,17 @@ public enum WhoopModel: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// Whether the strap accepts a second Bluetooth connection while the phone holds it, so an Apple
+    /// Watch can read it alongside the phone instead of borrowing it. Verified on a WHOOP 5.0: a second
+    /// central connected and received standard HR with the phone still connected. The MG is assumed
+    /// to match. The WHOOP 4.0 keeps the one-connection hand-off.
+    public var acceptsSecondConnection: Bool {
+        switch self {
+        case .whoop4:   return false
+        case .whoop5mg: return true
+        }
+    }
+
     /// The model the user last chose, read from the same key the pickers write
     /// (`@AppStorage("selectedWhoopModel")`). Used as the default for scans the user
     /// didn't directly trigger — BLE state restoration, power-on reconnect — so those

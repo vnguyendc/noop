@@ -1,0 +1,8 @@
+// Copy to Config/Local.xcconfig (git-ignored) to sign with your own Apple Developer team.
+// Xcode registers the bundle IDs and App Groups under that team on the first signed build.
+//
+// DEVELOPMENT_TEAM: the 10-character Team ID (Xcode > Settings > Accounts, or developer.apple.com).
+// BUNDLE_ID_PREFIX: any reverse-DNS prefix you control, e.g. com.yourname.
+
+DEVELOPMENT_TEAM = ABCDE12345
+BUNDLE_ID_PREFIX = com.yourname

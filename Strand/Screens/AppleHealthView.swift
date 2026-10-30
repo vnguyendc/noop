@@ -19,6 +19,9 @@ import Foundation
 
 struct AppleHealthView: View {
     @EnvironmentObject var repo: Repository
+    #if os(iOS)
+    @EnvironmentObject private var health: HealthKitBridge
+    #endif
 
     // Imperial/Metric display preference (D#103). Weight and lean mass (stored kg) re-label to lb here;
     // every other Apple Health metric is unit-agnostic. Display-only.
@@ -156,8 +159,15 @@ struct AppleHealthView: View {
 
     var body: some View {
         ScreenScaffold(title: "Apple Health", subtitle: spanSubtitle.map { "\($0)" }) {
+            #if os(iOS)
+            AppleHealthConnectCard(health: health)
+            #endif
             if loaded && !hasAnyData {
+                #if os(iOS)
+                ComingSoon(what: "Nothing from Apple Health yet. Once it's connected, this page fills in after the first sync.")
+                #else
                 ComingSoon(what: "Nothing imported yet. On an iPhone: Health app, tap your photo, Export All Health Data, then import the .zip here in Data Sources.")
+                #endif
             } else if !loaded {
                 loadingState
             } else {
@@ -173,6 +183,10 @@ struct AppleHealthView: View {
         }
         .task { await load() }
         .onChange(of: range) { _ in rebuildWindowCache() }
+        #if os(iOS)
+        // A sync (from Connect, or on returning to the app) can bring in data this page hasn't shown.
+        .onChange(of: health.lastSync) { Task { await load() } }
+        #endif
     }
 
     /// Rebuild the per-metric resolved-window cache from scratch. Called once after

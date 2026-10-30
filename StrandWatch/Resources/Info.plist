@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>NOOP</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>NOOP</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NOOPWatchAppGroupID</key>
+	<string>$(WATCH_APP_GROUP_ID)</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>NOOP connects directly to your WHOOP or heart-rate strap over Bluetooth to show live heart rate, R-R intervals, and battery on your Apple Watch. Nothing leaves your device.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>NOOP starts a workout session so your Apple Watch can keep reading your strap with your wrist down. Nothing leaves your device.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>NOOP needs workout permission to keep a workout session running while it reads your strap. It does not save workouts from the watch.</string>
+	<key>WKApplication</key>
+	<true/>
+	<key>WKBackgroundModes</key>
+	<array>
+		<string>workout-processing</string>
+	</array>
+	<key>WKCompanionAppBundleIdentifier</key>
+	<string>$(BUNDLE_ID_PREFIX).noop</string>
+</dict>
+</plist>

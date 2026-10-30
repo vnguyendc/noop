@@ -1,0 +1,16 @@
+// Shared signing defaults for the iOS + watchOS targets (NOOPiOS, NOOPiOSWidgets, NOOPWatch,
+// NOOPWatchWidgets, NOOPiOSTests). The macOS app keeps its fixed bundle ID so its sandbox
+// container (and the user's data) never moves.
+//
+// Upstream builds stay anonymous and unsigned: no team, com.noopapp IDs. To sign with your own
+// team, copy Local.xcconfig.example to Local.xcconfig (git-ignored) and fill it in.
+
+DEVELOPMENT_TEAM =
+BUNDLE_ID_PREFIX = com.noopapp
+
+// App Groups are derived from the prefix so a personal build never collides with another team's
+// registered group. The app reads the expanded value from Info.plist at runtime (AppGroupID.swift).
+APP_GROUP_ID = group.$(BUNDLE_ID_PREFIX).noop
+WATCH_APP_GROUP_ID = group.$(BUNDLE_ID_PREFIX).noop.watch
+
+#include? "Local.xcconfig"

@@ -9,6 +9,12 @@ options:
   # the String Catalog (Strand/Resources/Localizable.xcstrings) carries this as the
   # source language and is where additional languages are added.
   developmentLanguage: en
+# Signing defaults + optional git-ignored personal override (Config/Local.xcconfig). The
+# DEVELOPMENT_TEAM / BUNDLE_ID_PREFIX / APP_GROUP_ID values live there, not in `settings`, because
+# project-level settings here would override the xcconfig.
+configFiles:
+  Debug: Config/Signing.xcconfig
+  Release: Config/Signing.xcconfig
 settings:
   base:
     MARKETING_VERSION: "2.8.6"
@@ -18,7 +24,6 @@ settings:
     # String Catalog on build (the English (US) base entries).
     SWIFT_EMIT_LOC_STRINGS: YES
     SWIFT_STRICT_CONCURRENCY: minimal
-    DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     # Build for both Apple Silicon and Intel so the release runs on every Mac.
     ARCHS: "$(ARCHS_STANDARD)"
@@ -42,6 +47,39 @@ packages:
     path: Packages/StrandImport
   StrandDesign:
     path: Packages/StrandDesign
+schemes:
+  NOOPiOS:
+    build:
+      targets:
+        NOOPiOS: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  NOOPiOSWidgets:
+    build:
+      targets:
+        NOOPiOSWidgets: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  NOOPWatch:
+    build:
+      targets:
+        NOOPWatch: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  NOOPWatchWidgets:
+    build:
+      targets:
+        NOOPWatchWidgets: all
+    run:
+      config: Debug
+    archive:
+      config: Release
 targets:
   Strand:
     type: application
@@ -82,6 +120,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop
+        # The macOS app stays ad-hoc/unsigned even when Config/Local.xcconfig sets a team for the
+        # iOS + watch targets, so a local personal override never changes how the Mac app is signed.
+        DEVELOPMENT_TEAM: ""
         PRODUCT_NAME: NOOP
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
@@ -110,6 +151,19 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.strandtests
+        DEVELOPMENT_TEAM: ""
+
+  NOOPiOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - StrandiOSSharedTests
+      - StrandiOSShared
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).noop.tests
 
   # ---------------------------------------------------------------------------
   # iOS app target (community build-from-source; never distributed via the App
@@ -168,6 +222,9 @@ targets:
         NSBluetoothAlwaysUsageDescription: "NOOP connects directly to your WHOOP strap over Bluetooth to read heart rate, R-R intervals, battery, and sensor data locally on your iPhone. Nothing leaves your device."
         NSHealthShareUsageDescription: "NOOP reads your own Apple Health data on-device to compute recovery, strain, and sleep. Nothing leaves your device."
         NSHealthUpdateUsageDescription: "NOOP writes the metrics it computes from your strap back into Apple Health, on-device and only when you allow it."
+        # Export compliance, so TestFlight doesn't ask for every build: NOOP uses only the system's
+        # standard HTTPS (AI Coach, update check) and no encryption of its own.
+        ITSAppUsesNonExemptEncryption: false
         # #187: the opt-in AI Coach's "Custom (OpenAI-compatible)" provider can point at a LOCAL LLM on
         # the LAN (Ollama / LM Studio at http://192.168.x.x:11434). ATS blocks cleartext by default;
         # NSAllowsLocalNetworking exempts loopback/.local/private-LAN hosts ONLY — public HTTPS endpoints
@@ -179,17 +236,19 @@ targets:
         # Both keys are required for the folder to actually appear in Files.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # Expanded App Group id, read at runtime by AppGroupID (StrandiOSShared).
+        NOOPAppGroupID: $(APP_GROUP_ID)
     entitlements:
       path: StrandiOS/Resources/NOOP.entitlements
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
         com.apple.security.application-groups:
-          - group.com.noopapp.noop
+          - $(APP_GROUP_ID)
     settings:
       base:
         CURRENT_PROJECT_VERSION: "49"
-        PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).noop
         PRODUCT_NAME: NOOP
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
@@ -203,6 +262,7 @@ targets:
       - package: StrandDesign
       - package: MarkdownUI
       - target: NOOPiOSWidgets
+      - target: NOOPWatch
 
   # WidgetKit + Live Activity extension — the iOS analogue of the macOS menu-bar
   # extra. Reads a tiny snapshot the app publishes into the shared App Group.
@@ -220,18 +280,92 @@ targets:
       path: StrandiOSWidgets/Info.plist
       properties:
         CFBundleDisplayName: NOOP
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NOOPAppGroupID: $(APP_GROUP_ID)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     entitlements:
       path: StrandiOSWidgets/NOOPWidgets.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.noopapp.noop
+          - $(APP_GROUP_ID)
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.noopapp.noop.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).noop.widgets
         PRODUCT_NAME: NOOPWidgets
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
     dependencies:
       - package: StrandDesign
+
+  NOOPWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: StrandWatch
+        excludes:
+          - "Resources/NOOPWatch.entitlements"
+      - path: StrandiOSShared
+    info:
+      path: StrandWatch/Resources/Info.plist
+      properties:
+        CFBundleName: NOOP
+        CFBundleDisplayName: NOOP
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: $(BUNDLE_ID_PREFIX).noop
+        NSBluetoothAlwaysUsageDescription: "NOOP connects directly to your WHOOP or heart-rate strap over Bluetooth to show live heart rate, R-R intervals, and battery on your Apple Watch. Nothing leaves your device."
+        # Workout mode: a running HKWorkoutSession is what keeps the watch app (and its Bluetooth
+        # link to the strap) alive with the wrist down. NOOP saves nothing to Health from the watch.
+        NSHealthShareUsageDescription: "NOOP starts a workout session so your Apple Watch can keep reading your strap with your wrist down. Nothing leaves your device."
+        NSHealthUpdateUsageDescription: "NOOP needs workout permission to keep a workout session running while it reads your strap. It does not save workouts from the watch."
+        WKBackgroundModes:
+          - workout-processing
+        NOOPWatchAppGroupID: $(WATCH_APP_GROUP_ID)
+    entitlements:
+      path: StrandWatch/Resources/NOOPWatch.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
+        com.apple.security.application-groups:
+          - $(WATCH_APP_GROUP_ID)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).noop.watchkitapp
+        PRODUCT_NAME: NOOPWatch
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: WhoopProtocol
+      - target: NOOPWatchWidgets
+
+  NOOPWatchWidgets:
+    type: app-extension
+    platform: watchOS
+    deploymentTarget: "10.0"
+    sources:
+      - path: StrandWatchWidgets
+        excludes:
+          - "NOOPWatchWidgets.entitlements"
+      - path: StrandiOSShared
+    info:
+      path: StrandWatchWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: NOOP
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NOOPWatchAppGroupID: $(WATCH_APP_GROUP_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: StrandWatchWidgets/NOOPWatchWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(WATCH_APP_GROUP_ID)
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_ID_PREFIX).noop.watchkitapp.widgets
+        PRODUCT_NAME: NOOPWatchWidgets
+        GENERATE_INFOPLIST_FILE: NO

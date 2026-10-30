@@ -15,6 +15,8 @@ final class HealthKitBridge: ObservableObject {
     enum AuthState: Equatable { case unknown, unavailable, denied, authorized }
 
     @Published private(set) var auth: AuthState = .unknown
+    /// What the Apple Health card shows. Read back from HealthKit by `refreshAuthorization`.
+    @Published private(set) var connection: AppleHealthConnection = .notConnected
     @Published private(set) var lastSync: Date?
     @Published private(set) var syncing = false
     /// The most recent failure surfaced by `sync` / `writeBack`. Cleared on a successful run. UI binds
@@ -32,7 +34,7 @@ final class HealthKitBridge: ObservableObject {
         self.repo = repo
         self.appleDeviceId = appleDeviceId
         self.noopDeviceId = noopDeviceId
-        if !HKHealthStore.isHealthDataAvailable() { auth = .unavailable }
+        if !HKHealthStore.isHealthDataAvailable() { auth = .unavailable; connection = .unavailable }
     }
 
     // MARK: - Types
@@ -73,9 +75,23 @@ final class HealthKitBridge: ObservableObject {
         do {
             try await store.requestAuthorization(toShare: writeTypes, read: readTypes)
             auth = .authorized
+            await refreshAuthorization()
         } catch {
             auth = .denied
+            lastError = "Couldn't connect to Apple Health: \(error.localizedDescription)"
         }
+    }
+
+    /// Pick up a permission granted in an earlier launch. HealthKit remembers it but `auth` starts
+    /// as `.unknown`, so without this nothing syncs after a relaunch until the user taps Connect again.
+    func refreshAuthorization() async {
+        guard HKHealthStore.isHealthDataAvailable() else { auth = .unavailable; connection = .unavailable; return }
+        let request = try? await store.statusForAuthorizationRequest(toShare: writeTypes, read: readTypes)
+        let canSaveAny = writeTypes.contains { store.authorizationStatus(for: $0) == .sharingAuthorized }
+        connection = AppleHealthConnection(healthAvailable: true,
+                                           alreadyAsked: request == .unnecessary,
+                                           canSaveAny: canSaveAny)
+        if connection.isConnected { auth = .authorized }
     }
 
     // MARK: - Read → store
@@ -214,6 +230,9 @@ final class HealthKitBridge: ObservableObject {
                 add(.respiratoryRate, HKUnit.count().unitDivided(by: .minute()), rr, row.day, noon)
             }
         }
+        // HealthKit rejects the whole save if any sample's type isn't allowed, so a user who allowed
+        // only some types would get nothing. Write just the allowed ones.
+        candidates = candidates.filter { store.authorizationStatus(for: $0.type) == .sharingAuthorized }
         guard !candidates.isEmpty else { return }
 
         // Delete any of OUR prior samples that carry the same metadata keys, then write the fresh
