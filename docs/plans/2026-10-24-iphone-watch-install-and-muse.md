@@ -256,6 +256,8 @@ The user asked: "can we do the upload and install programatically? so i dont hav
 | r4 rendered UI in the simulator | **Blocked.** Computer use was held by another Claude session (84ed9e52), so the simulator couldn't be tapped past the What's new sheet to the Apple Health screen. The rendered review moves to the user's device screenshots of build 52. |
 | r5: `Tools/testflight.py`, first run 2026-10-29 21:11 | **Uploaded, wrong number.** The API key (HZNAHNPC3A, Admin) signed and uploaded from the command line, which the Xcode account login never managed. But Xcode's `manageAppVersionAndBuildNumber` kept the project's own build number (49), and App Store Connect accepted it. 49 is below the installed 51, so TestFlight never offered it. Fix: the script reads the highest build number from App Store Connect and passes `CURRENT_PROJECT_VERSION=<max+1>`. |
 | r5: second run 2026-10-29 | **Pass.** Build 52 uploaded, processed (`VALID`) and released through the "Me" group, which gets every build. `usesNonExemptEncryption` was already `false` on the build, so no compliance prompt. Install on the iPhone and watch is still the user's to confirm. |
+| Build 52 on device, 2026-10-29 | **Installed on the iPhone and the Ultra 4, by the user's report** ("installed 52 on both"). They tapped Connect Apple Health and allowed it ("connected apple health"). Health-app values, Muse answers and screenshots are still pending. |
+| R6: Muse via Apple Health, build 52, 2026-10-29 21:32 (`evidence/2026-10-29-muse-rhr-hrv.png`) | **Pass, with one gap.** After the user connected Apple Health in NOOP and Muse's Apple Health connector, Muse answered a resting-HR/HRV question with daily values (Oct 24–29 RHR 66/57/60/62/71/67 bpm; HRV 52 ms on the 28th, 58 ms on the 29th) and said itself that "the daily numbers merge your Watch and NOOP data together", so it sees NOOP as a Health source. Gap: the values were not compared against NOOP's own Health screen, and no Health-app Data Sources screenshot was taken. |
 
 ### UI/UX review (frontend-skill + frontend-design, applied to watchOS)
 
@@ -267,6 +269,12 @@ The user asked: "can we do the upload and install programatically? so i dont hav
   - **P1:** a Bluetooth failure hid the live screen while the phone stayed disconnected. The screen now follows the session, with "Search again" and "End workout".
 - **Not yet seen rendered:** the connected heart-rate reading, the scanning list and the elapsed timer. The simulator has no Bluetooth, and the workout permission sheet needs a tap. These are covered on device.
 - **Evidence:** screenshots in the session scratchpad: `01-glance-not-synced.png`, `02-glance-synced.png`, `03-workout-start.png`, `05-live-bluetooth-failed.png`.
+
+### UI/UX review on device, build 52 (2026-10-29, frontend-skill + frontend-design; user screenshots in `docs/plans/evidence/`)
+
+- **Watch glance (`2026-10-29-watch-glance.jpg`, Ultra 4):** Charge 85 in the ring, 59 bpm, strap battery 70%, "Strap connected to iPhone", "updated just now", Start workout. Hierarchy reads in one glance; the ring is the one visual anchor, copy is product language, the one accent carries the only action. No findings. R3 pass for the glance; the complication families remain simulator-verified only.
+- **iPhone home icon (`2026-10-29-iphone-home-icon.png`):** the full-bleed opaque icon renders as the dark tile with the mint pulse, edge to edge, matching the macOS icon's artwork; no margin or white corners. No findings.
+- **Apple Health screen (`2026-10-29-apple-health-connected.png`):** the connect card shows "Connected to Apple Health", the one-line explanation, and "Last synced at 9:24 PM". Card, pill and type match the existing system. **Finding (P2, open):** every metric tile below reads "—" although the span subtitle shows 31 days of rows, so the read side imported day rows without quantity values. Likely read permission off for the quantity types (HealthKit hides read status), or a read-path problem; unresolved until the user checks Settings → Health → Data Access & Devices → NOOP. This does not block R6, which is about the write side.
 
 ### Independent review, round 1 (feature-dev code-reviewer agent; reads code only, cannot run it)
 
