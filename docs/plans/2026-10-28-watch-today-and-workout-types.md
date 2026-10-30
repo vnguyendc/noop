@@ -181,6 +181,7 @@ No Obsidian note or Linear issue is linked to this watch work in the existing pl
 - 2026-10-29: v4 links the mocks and fixes the Effort colour (strain ramp, not cyan).
 - 2026-10-29: v5, second design pass after rendering the mocks: Charge becomes the large ring with Effort and Rest beside it; small watchOS-style page titles; page 3 titled "Start a workout"; Vitals sleep colour from the palette; live screen drops the device-name line and words the R-R count as "Recording, N beats"; optional R12 saved screen.
 - 2026-10-29: plan v5 approved by the user ("approved"), R12 included.
+- 2026-10-29: implemented and verified on simulators; PR https://github.com/vnguyendc/noop/pull/2 (base `feat/watch-always-connected`, stacked on PR #1, in the private repo `vnguyendc/noop`, which already existed; no new repo was created). Awaiting G4 review. Not merged.
 
 ## Implementation record
 
