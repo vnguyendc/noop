@@ -37,6 +37,23 @@ final class WatchLiveModel: ObservableObject {
     @Published private(set) var isLive = false
     /// Why the last workout ended when the user didn't end it, shown on the glance.
     @Published private(set) var endReason: String?
+    /// The type of the running workout, shown in the live header and sent to the phone at the end.
+    @Published private(set) var activeKind: WatchWorkoutKind?
+    /// Listed first on the Start a workout page.
+    @Published private(set) var lastUsedKind: WatchWorkoutKind? = WatchWorkoutKind.loadLastUsed()
+    /// The workout the user just ended, shown on the saved screen until dismissed.
+    @Published private(set) var lastSaved: SavedWorkout?
+
+    struct SavedWorkout: Equatable {
+        let kind: WatchWorkoutKind
+        let start: Date
+        let end: Date
+        let avgHr: Int
+    }
+
+    /// Running sum of the heart-rate readings this workout, for the saved screen's average.
+    private var hrSum = 0
+    private var hrCount = 0
 
     /// Give the strap back to the phone if the watch hasn't held it for this long (still searching,
     /// Bluetooth off, strap out of range), so neither device sits idle for a whole workout.
@@ -48,8 +65,9 @@ final class WatchLiveModel: ObservableObject {
     private var watchdog: Timer?
 
     init() {
-        client.onHeartRate = { [weak store] hr, rr, at in
+        client.onHeartRate = { [weak self, weak store] hr, rr, at in
             store?.recordSample(hr: hr, rr: rr, at: at)
+            self?.noteHeartRate(hr)
         }
         store.isHoldingStrap = { [weak client] in client?.state.connected ?? false }
         workout.onEndedBySystem = { [weak self] in
@@ -91,12 +109,24 @@ final class WatchLiveModel: ObservableObject {
         }
     }
 
-    /// Take the strap from the phone and keep reading it inside a workout session.
+    private func noteHeartRate(_ hr: Int) {
+        guard isLive else { return }
+        hrSum += hr
+        hrCount += 1
+    }
+
+    /// Take the strap from the phone and keep reading it inside a workout session of `kind`.
     /// `useWorkoutSession: false` exists only for simulator screenshots (no Health prompt).
-    func start(useWorkoutSession: Bool = true) {
+    func start(kind: WatchWorkoutKind, useWorkoutSession: Bool = true) {
         guard !isLive else { return }
         isLive = true
         endReason = nil
+        lastSaved = nil
+        activeKind = kind
+        kind.saveAsLastUsed()
+        lastUsedKind = kind
+        hrSum = 0
+        hrCount = 0
         liveStartedAt = Date()
         lastHeldStrapAt = Date()
         startWatchdog()
@@ -104,8 +134,39 @@ final class WatchLiveModel: ObservableObject {
         store.startSampleFlushing()
         client.startScan()
         client.keepConnected = true
-        if useWorkoutSession { Task { await workout.start() } }
+        if useWorkoutSession { Task { await workout.start(kind: kind) } }
     }
+
+    func dismissSaved() {
+        lastSaved = nil
+    }
+
+    #if DEBUG
+    private var demoTimer: Timer?
+
+    /// Simulator checks without a strap: feed a reading a second (120–150 bpm) as if the strap sent
+    /// it, so the phone has samples to score, and end the workout after `seconds` if given.
+    func startDemoReadings(stopAfter seconds: TimeInterval?) {
+        demoTimer?.invalidate()
+        var tick = 0
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isLive else { self?.demoTimer?.invalidate(); return }
+                tick += 1
+                let hr = 120 + (tick * 7) % 31
+                self.store.recordSample(hr: hr, rr: [60_000 / hr], at: Date())
+                self.noteHeartRate(hr)
+                if let seconds, Double(tick) >= seconds { self.stop() }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        demoTimer = timer
+    }
+
+    func showDemoSaved() {
+        lastSaved = SavedWorkout(kind: .strength, start: Date().addingTimeInterval(-768), end: Date(), avgHr: 124)
+    }
+    #endif
 
     /// Retry finding the strap after a failed scan or connection, without ending the workout.
     func rescan() {
@@ -114,19 +175,34 @@ final class WatchLiveModel: ObservableObject {
         client.keepConnected = true
     }
 
-    /// End the workout, send the remaining samples, then give the strap back to the phone.
-    /// `reason` is shown on the glance when the user didn't end it themselves.
+    /// End the workout, send the remaining samples and then the workout record (type and span) in
+    /// that order, then give the strap back to the phone. `reason` is shown on the glance when the
+    /// user didn't end it themselves.
     func stop(reason: String? = nil) {
         guard isLive else { return }
         isLive = false
         endReason = reason
         watchdog?.invalidate()
         watchdog = nil
+        let kind = activeKind
+        activeKind = nil
+        let start = liveStartedAt
+        let end = Date()
         workout.end()
         client.stop()
         store.stopSampleFlushing()
+        if let kind {
+            store.sendWorkoutRecord(WatchWorkoutRecord(sport: kind.sport, start: start, end: end))
+        }
         store.setDirectModeActive(false)
         store.requestRefresh()
+        // The phone saves nothing from fewer than two readings, so don't claim a save then.
+        guard reason == nil, let kind else { return }
+        if hrCount >= 2 {
+            lastSaved = SavedWorkout(kind: kind, start: start, end: end, avgHr: hrSum / hrCount)
+        } else {
+            endReason = "No heart rate was recorded, so nothing was saved."
+        }
     }
 }
 

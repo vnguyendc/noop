@@ -208,22 +208,11 @@ final class AppModel: ObservableObject {
     func endWorkout() {
         guard let w = activeWorkout else { return }
         activeWorkout = nil
-        let samples = w.samples
-        guard samples.count >= 2 else { lastWorkout = nil; return }
-        let end = Date()
-        let avg = Int((Double(samples.map(\.bpm).reduce(0, +)) / Double(samples.count)).rounded())
-        let peak = samples.map(\.bpm).max() ?? 0
-        let strain = StrainScorer.strain(samples, maxHR: Double(profile.hrMax), sex: profile.sex)
-        // Estimate calories from the captured HR window (same Keytel/Harris–Benedict model the
-        // auto-detector uses) so a manual session shows energy too, not just duration/strain. (#117)
-        let up = UserProfile(weightKg: profile.weightKg, heightCm: profile.heightCm,
-                             age: Double(profile.age), sex: profile.sex)
-        let kcal = Calories.estimateBoutCalories(samples, profile: up, hrmax: Double(profile.hrMax), restingHR: nil).0
-        let row = WorkoutRow(
-            startTs: Int(w.start.timeIntervalSince1970), endTs: Int(end.timeIntervalSince1970),
-            sport: "Workout", source: "manual", durationS: end.timeIntervalSince(w.start),
-            energyKcal: kcal > 0 ? kcal : nil, avgHr: avg, maxHr: peak, strain: strain,
-            distanceM: nil, zonesJSON: nil, notes: nil)
+        guard let row = WorkoutScoring.row(samples: w.samples, start: w.start, end: Date(), sport: "Workout",
+                                           profile: ScoringProfile(profile)) else {
+            lastWorkout = nil
+            return
+        }
         lastWorkout = row
         buzz(loops: 2)
         Task { [weak self] in
