@@ -3,18 +3,41 @@ import Foundation
 /// Tiny glance snapshot synchronized from iPhone to Apple Watch. The watch app and its complication
 /// read only this value; BLE, SQLite, HealthKit, and scoring stay on iPhone.
 public struct WatchSnapshot: Codable, Equatable {
+    /// Charge, 0–100. Keeps its original key so old and new builds read each other's snapshots.
     public var recovery: Int?
     public var bpm: Int?
     public var batteryPct: Int?
     public var bonded: Bool
     public var updated: Date
+    // Added later as optionals: a snapshot from an older phone decodes with these nil, and an older
+    // watch ignores them.
+    /// Effort, 0–100.
+    public var effort: Int?
+    /// Rest, 0–100.
+    public var rest: Int?
+    public var hrvMs: Int?
+    public var restingHr: Int?
+    /// Last night's sleep, in minutes.
+    public var sleepMin: Int?
 
-    public init(recovery: Int?, bpm: Int?, batteryPct: Int?, bonded: Bool, updated: Date) {
+    public init(recovery: Int?, bpm: Int?, batteryPct: Int?, bonded: Bool, updated: Date,
+                effort: Int? = nil, rest: Int? = nil, hrvMs: Int? = nil, restingHr: Int? = nil,
+                sleepMin: Int? = nil) {
         self.recovery = recovery
         self.bpm = bpm
         self.batteryPct = batteryPct
         self.bonded = bonded
         self.updated = updated
+        self.effort = effort
+        self.rest = rest
+        self.hrvMs = hrvMs
+        self.restingHr = restingHr
+        self.sleepMin = sleepMin
+    }
+
+    /// "7h 12m" for the watch's Vitals page; nil without sleep data.
+    public var sleepText: String? {
+        sleepMin.map { "\($0 / 60)h \($0 % 60)m" }
     }
 
     public static let staleAfter: TimeInterval = 15 * 60
@@ -22,7 +45,8 @@ public struct WatchSnapshot: Codable, Equatable {
     public static let storageKey = "noop.watch.snapshot"
 
     public static var placeholder: WatchSnapshot {
-        WatchSnapshot(recovery: 72, bpm: 58, batteryPct: 84, bonded: true, updated: Date())
+        WatchSnapshot(recovery: 72, bpm: 58, batteryPct: 84, bonded: true, updated: Date(),
+                      effort: 48, rest: 85, hrvMs: 64, restingHr: 52, sleepMin: 432)
     }
 
     public func isStale(now: Date = Date(), staleAfter: TimeInterval = WatchSnapshot.staleAfter) -> Bool {
@@ -31,10 +55,10 @@ public struct WatchSnapshot: Codable, Equatable {
 
     public func updatedText(now: Date = Date()) -> String {
         let seconds = max(0, Int(now.timeIntervalSince(updated)))
-        if seconds < 60 { return "updated just now" }
-        if seconds < 3600 { return "updated \(seconds / 60) min ago" }
-        if seconds < 86_400 { return "updated \(seconds / 3600) h ago" }
-        return "updated \(seconds / 86_400) d ago"
+        if seconds < 60 { return "Synced just now" }
+        if seconds < 3600 { return "Synced \(seconds / 60) min ago" }
+        if seconds < 86_400 { return "Synced \(seconds / 3600) h ago" }
+        return "Synced \(seconds / 86_400) d ago"
     }
 
     public static func loadForWatch() -> WatchSnapshot? {

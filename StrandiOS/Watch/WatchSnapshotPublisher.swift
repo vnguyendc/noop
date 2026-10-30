@@ -13,6 +13,9 @@ final class WatchSnapshotPublisher: NSObject, WCSessionDelegate {
     private weak var model: AppModel?
     private var cancellables = Set<AnyCancellable>()
     private var watchDirectHandoff = WatchDirectHandoffCoordinator()
+    /// Sample batches and workout records in the order the watch queued them, so a record is scored
+    /// only after the samples sent ahead of it are stored.
+    private let inbox = OrderedInbox()
 
     @MainActor
     func start(model: AppModel) {
@@ -55,7 +58,36 @@ final class WatchSnapshotPublisher: NSObject, WCSessionDelegate {
             .store(in: &cancellables)
 
         publish(from: model)
+
+        #if DEBUG
+        // Simulators don't deliver `transferUserInfo` between a paired phone and watch, so
+        // `-NOOPSimulateWatchWorkout YES` feeds a two-minute Rowing workout (samples first, then the
+        // record, as the watch queues them) through the same receive path a real transfer takes.
+        if UserDefaults.standard.bool(forKey: "NOOPSimulateWatchWorkout") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.simulateWatchWorkout()
+            }
+        }
+        #endif
     }
+
+    #if DEBUG
+    private func simulateWatchWorkout() {
+        let end = Date()
+        let start = end.addingTimeInterval(-120)
+        let samples = (0..<120).map { i in
+            WatchHRSample(ts: Int(start.timeIntervalSince1970) + i, bpm: 120 + (i * 7) % 31, rr: [])
+        }
+        let batch = WatchSampleBatch(sentAt: end, directModeActive: false, samples: samples)
+        let record = WatchWorkoutRecord(sport: WatchWorkoutKind.rowing.sport, start: start, end: end)
+        guard let batchInfo = WatchSampleTransport.userInfo(for: batch),
+              let recordInfo = WatchWorkoutTransport.userInfo(for: record) else { return }
+        session(WCSession.default, didReceiveUserInfo: batchInfo)
+        session(WCSession.default, didReceiveUserInfo: recordInfo)
+        // Delivered twice: must update the same entry, not add a second one.
+        session(WCSession.default, didReceiveUserInfo: recordInfo)
+    }
+    #endif
 
     @MainActor
     func publish(from model: AppModel) {
@@ -150,17 +182,62 @@ final class WatchSnapshotPublisher: NSObject, WCSessionDelegate {
 
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         if let batch = WatchSampleTransport.batch(from: userInfo) {
+            NSLog("NOOP: watch sent %d samples", batch.samples.count)
             handleSampleBatch(batch)
+            return
+        }
+        if let record = WatchWorkoutTransport.record(from: userInfo) {
+            NSLog("NOOP: watch sent workout record %@ %@", record.sport, record.id.uuidString)
+            inbox.enqueue { await self.saveWatchWorkout(record) }
             return
         }
         handleWatchDirectModeMessage(userInfo)
     }
 
+    /// Score a workout the watch tracked from the samples it already sent, and save it under the
+    /// chosen sport like a workout started on the phone. The row's key is (device, start, sport), so
+    /// a record delivered twice updates the same entry; too few samples saves nothing, as on the phone.
+    @MainActor
+    private func saveWatchWorkout(_ record: WatchWorkoutRecord) async {
+        guard record.isValid else {
+            NSLog("NOOP: ignored invalid watch workout record %@", record.id.uuidString)
+            return
+        }
+        guard let model else { return }
+        guard let store = await model.repo.storeHandle() else {
+            NSLog("NOOP: store not ready; dropped watch workout %@", record.sport)
+            return
+        }
+        let samples: [HRSample]
+        do {
+            samples = try await store.hrSamples(deviceId: model.deviceId, from: record.startTs, to: record.endTs,
+                                                limit: Self.maxWorkoutSamples)
+        } catch {
+            NSLog("NOOP: couldn't read samples for watch workout %@: %@", record.sport, error.localizedDescription)
+            return
+        }
+        guard let row = WorkoutScoring.row(samples: samples, start: record.start, end: record.end,
+                                           sport: record.sport, profile: ScoringProfile(model.profile)) else {
+            NSLog("NOOP: watch workout %@ had %d samples; not saved", record.sport, samples.count)
+            return
+        }
+        do {
+            _ = try await store.upsertWorkouts([row], deviceId: model.deviceId)
+            NSLog("NOOP: saved watch workout %@ from %d samples", record.sport, samples.count)
+            await model.repo.refresh()
+        } catch {
+            NSLog("NOOP: failed to save watch workout %@: %@", record.sport, error.localizedDescription)
+        }
+    }
+
+    /// One sample per second for 12 hours; longer spans are truncated rather than unbounded.
+    private static let maxWorkoutSamples = 12 * 3600
+
     /// Store readings the watch took while it held the strap, under the strap's own device id so
     /// they merge into the same history. Inserts are idempotent (one row per second), so a batch
     /// delivered twice changes nothing.
     private func handleSampleBatch(_ batch: WatchSampleBatch) {
-        Task { @MainActor in
+        inbox.enqueue { @MainActor in
             // The watch only sends while it is connected to the strap, so a batch is proof it holds it.
             if batch.directModeActive {
                 self.perform(self.watchDirectHandoff.watchHoldsStrap(at: batch.sentAt))
@@ -248,13 +325,18 @@ final class WatchSnapshotPublisher: NSObject, WCSessionDelegate {
 extension WatchSnapshot {
     @MainActor
     static func make(from model: AppModel) -> WatchSnapshot {
-        let recovery = model.repo.days.last(where: { $0.recovery != nil })?.recovery
+        let values = WatchScoreValues(days: model.repo.days)
         return WatchSnapshot(
-            recovery: recovery.map { Int($0.rounded()) },
+            recovery: values.charge,
             bpm: model.bpm ?? model.live.heartRate,
             batteryPct: model.live.batteryPct.map { Int($0.rounded()) },
             bonded: model.live.bonded,
-            updated: Date()
+            updated: Date(),
+            effort: values.effort,
+            rest: values.rest,
+            hrvMs: values.hrvMs,
+            restingHr: values.restingHr,
+            sleepMin: values.sleepMin
         )
     }
 }
