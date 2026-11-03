@@ -8,27 +8,48 @@ struct WatchGlanceView: View {
 
     private var directState: WatchDirectLiveState { directClient.state }
 
+    #if DEBUG
+    // `-NOOPStartPage 1` opens on Vitals (2: workouts) for simulator screenshots.
+    @State private var page = UserDefaults.standard.integer(forKey: "NOOPStartPage")
+    #else
+    @State private var page = 0
+    #endif
+
     var body: some View {
-        ScrollView {
-            Group {
-                if live.isLive {
+        Group {
+            if live.isLive {
+                ScrollView {
                     liveView
-                } else {
-                    glanceView
+                        .padding(.horizontal, 4)
                 }
+            } else if let saved = live.lastSaved {
+                NavigationStack {
+                    WatchSavedWorkoutView(saved: saved) { live.dismissSaved() }
+                }
+            } else {
+                pages
             }
-            .padding(.horizontal, 4)
         }
         .task {
             store.requestRefresh()
             #if DEBUG
             // Simulator checks: `simctl launch <watch> <bundle> -NOOPAutoStartWorkout YES`
             // (or `-NOOPAutoStartLiveOnly YES` to skip the workout session and its Health prompt).
+            // `-NOOPAutoStartKind running` picks the type; the default is Other.
+            // `-NOOPDemoSnapshot YES` shows fixed scores; `-NOOPDemoReadings YES` fakes strap readings during a workout and
+            // `-NOOPAutoStopAfter 20` ends it after 20 s; `-NOOPDemoSaved YES` shows the saved screen.
             let defaults = UserDefaults.standard
+            let kind = defaults.string(forKey: "NOOPAutoStartKind").flatMap(WatchWorkoutKind.init(rawValue:)) ?? .other
+            if defaults.bool(forKey: "NOOPDemoSnapshot") { store.useDemoSnapshot() }
+            if defaults.bool(forKey: "NOOPDemoSaved") { live.showDemoSaved() }
             if !live.isLive, defaults.bool(forKey: "NOOPAutoStartWorkout") {
-                live.start()
+                live.start(kind: kind)
             } else if !live.isLive, defaults.bool(forKey: "NOOPAutoStartLiveOnly") {
-                live.start(useWorkoutSession: false)
+                live.start(kind: kind, useWorkoutSession: false)
+            }
+            if live.isLive, defaults.bool(forKey: "NOOPDemoReadings") {
+                let stopAfter = defaults.double(forKey: "NOOPAutoStopAfter")
+                live.startDemoReadings(stopAfter: stopAfter > 0 ? stopAfter : nil)
             }
             #endif
         }
@@ -37,66 +58,22 @@ struct WatchGlanceView: View {
         }
     }
 
-    // MARK: - Glance (data from the phone)
+    // MARK: - Pages (data from the phone)
 
-    private var glanceView: some View {
-        let snapshot = store.snapshot
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("NOOP")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            HStack(alignment: .center, spacing: 10) {
-                // No label inside the ring: the "Charge" heading beside it names the value.
-                Gauge(value: Double(snapshot?.recovery ?? 0), in: 0...100) {
-                    EmptyView()
-                } currentValueLabel: {
-                    Text(snapshot?.recovery.map(String.init) ?? "–")
-                        .monospacedDigit()
+    /// Today, Vitals, Start a workout: turn the Crown or swipe vertically to move between them.
+    private var pages: some View {
+        NavigationStack {
+            TabView(selection: $page) {
+                WatchTodayPage(snapshot: store.snapshot, notice: live.endReason ?? workout.unavailableReason)
+                    .tag(0)
+                WatchVitalsPage(snapshot: store.snapshot)
+                    .tag(1)
+                WatchWorkoutsPage(lastUsed: live.lastUsedKind) { kind in
+                    live.start(kind: kind)
                 }
-                .gaugeStyle(.accessoryCircular)
-                .tint(chargeColor(snapshot?.recovery))
-                .scaleEffect(1.25)
-                .frame(width: 64, height: 64)
-                .accessibilityLabel(chargeAccessibilityLabel(snapshot?.recovery))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Charge")
-                        .font(.headline)
-                    metric(snapshot?.bpm.map { "\($0) bpm" }, systemImage: "heart.fill",
-                           accessibility: snapshot?.bpm.map { "Heart rate \($0) beats per minute" })
-                    metric(snapshot?.batteryPct.map { "\($0)%" }, systemImage: batterySymbol(snapshot?.batteryPct),
-                           accessibility: snapshot?.batteryPct.map { "Strap battery \($0) percent" })
-                }
+                .tag(2)
             }
-
-            if let snapshot {
-                Text(snapshot.bonded ? "Strap connected to iPhone" : "Strap not connected")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(snapshot.updatedText())
-                    .font(.caption2)
-                    .foregroundStyle(snapshot.isStale() ? .orange : .secondary)
-            } else {
-                Text("Open NOOP on your iPhone to sync.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            Button {
-                live.start()
-            } label: {
-                Label("Start workout", systemImage: "figure.run")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.top, 4)
-
-            if let reason = live.endReason ?? workout.unavailableReason {
-                Text(reason)
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
+            .tabViewStyle(.verticalPage)
         }
     }
 
@@ -127,19 +104,23 @@ struct WatchGlanceView: View {
 
     @ViewBuilder
     private var elapsedHeader: some View {
-        HStack {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(live.activeKind?.name ?? "Workout")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.noopAccent)
+                .lineLimit(1)
             if let since = workout.startedAt {
                 Text(timerInterval: since...Date.distantFuture, countsDown: false)
-                    .font(.caption.weight(.semibold))
+                    .font(.title3.weight(.semibold))
                     .monospacedDigit()
-                    .foregroundStyle(Color.noopAccent)
+                    .foregroundStyle(WatchScoreColor.timer)
             } else {
-                Text(workout.isActive ? "Starting workout" : "Live")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.noopAccent)
+                Text(workout.isActive ? "Starting" : "Live")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(WatchScoreColor.timer)
             }
-            Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var scanningView: some View {
@@ -189,10 +170,13 @@ struct WatchGlanceView: View {
 
     private var readingView: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(connectionText)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            // Only worth a line while it says something other than "connected".
+            if !directState.connected {
+                Text(connectionText)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(directState.bpm.map(String.init) ?? "–")
@@ -208,12 +192,15 @@ struct WatchGlanceView: View {
             .accessibilityLabel(directState.bpm.map { "Heart rate \($0) beats per minute" } ?? "No heart rate yet")
 
             HStack {
-                metric(directState.rr.isEmpty ? "No R-R" : "\(directState.rr.count) R-R",
-                       systemImage: "waveform.path.ecg",
-                       accessibility: directState.rr.isEmpty ? "No R-R intervals" : "\(directState.rr.count) R-R intervals")
-                Spacer()
                 metric(directState.batteryPct.map { "\($0)%" }, systemImage: batterySymbol(directState.batteryPct),
                        accessibility: directState.batteryPct.map { "Strap battery \($0) percent" })
+                Spacer()
+                // The R-R count rises while readings flow in: a sign the strap is still talking.
+                Text(directState.rr.isEmpty ? "Waiting for readings" : "Recording, \(directState.rr.count) beats")
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(directState.rr.isEmpty ? "Waiting for readings" : "Recording, \(directState.rr.count) beats received")
             }
 
             if let error = directState.errorMessage {
@@ -244,23 +231,4 @@ struct WatchGlanceView: View {
             .accessibilityLabel(accessibility ?? "Not available")
     }
 
-    private func chargeColor(_ charge: Int?) -> Color {
-        guard let charge else { return .secondary }
-        return charge >= 67 ? .green : charge >= 34 ? .yellow : .red
-    }
-
-    private func chargeAccessibilityLabel(_ charge: Int?) -> String {
-        charge.map { "Charge \($0) out of 100" } ?? "Charge not available"
-    }
-
-    private func batterySymbol(_ pct: Int?) -> String {
-        guard let pct else { return "battery.0percent" }
-        switch pct {
-        case ..<13: return "battery.0percent"
-        case ..<38: return "battery.25percent"
-        case ..<63: return "battery.50percent"
-        case ..<88: return "battery.75percent"
-        default: return "battery.100percent"
-        }
-    }
 }

@@ -43,7 +43,9 @@ final class WatchWorkoutController: NSObject, ObservableObject {
         return nil
     }
 
-    func start() async {
+    /// Start a session of the chosen kind. The kind only sets the session's activity type (what
+    /// watchOS shows while it runs); NOOP's own record of the workout is kept on the phone.
+    func start(kind: WatchWorkoutKind = .other) async {
         guard session == nil else { return }
         guard HKHealthStore.isHealthDataAvailable() else {
             phase = .unavailable("Apple Health isn't available on this watch.")
@@ -59,7 +61,7 @@ final class WatchWorkoutController: NSObject, ObservableObject {
                 return
             }
             let configuration = HKWorkoutConfiguration()
-            configuration.activityType = .other
+            configuration.activityType = kind.activityType
             configuration.locationType = .unknown
             let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
             session.delegate = self
@@ -123,6 +125,21 @@ extension WatchWorkoutController: HKWorkoutSessionDelegate {
             guard workoutSession === self.session else { return }
             self.phase = .unavailable(Self.message(for: error))
             self.finish(endedBySystem: true)
+        }
+    }
+}
+
+extension WatchWorkoutKind {
+    var activityType: HKWorkoutActivityType {
+        switch self {
+        case .strength: return .traditionalStrengthTraining
+        case .running: return .running
+        case .walking: return .walking
+        case .cycling: return .cycling
+        case .hiit: return .highIntensityIntervalTraining
+        case .rowing: return .rowing
+        case .yoga: return .yoga
+        case .other: return .other
         }
     }
 }

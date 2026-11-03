@@ -23,6 +23,13 @@ final class WatchSnapshotStore: NSObject, ObservableObject, WCSessionDelegate {
         activateSession()
     }
 
+    #if DEBUG
+    /// Simulator screenshots: show fixed scores without a paired phone.
+    func useDemoSnapshot() {
+        snapshot = WatchSnapshot.placeholder
+    }
+    #endif
+
     func requestRefresh() {
         activateSession()
         guard WCSession.default.isReachable else { return }
@@ -103,7 +110,22 @@ final class WatchSnapshotStore: NSObject, ObservableObject, WCSessionDelegate {
             }
             // Queued and delivered by the system even if the phone app isn't running right now.
             session.transferUserInfo(info)
+            NSLog("NOOP watch: queued %d samples", batch.samples.count)
         }
+    }
+
+    /// Queue the end-of-workout record for the phone. Call after `stopSampleFlushing()`: queued
+    /// transfers are delivered in order, so the phone stores the samples before it scores them.
+    func sendWorkoutRecord(_ record: WatchWorkoutRecord) {
+        activateSession()
+        let session = WCSession.default
+        guard session.activationState == .activated,
+              let info = WatchWorkoutTransport.userInfo(for: record) else {
+            NSLog("NOOP watch: couldn't queue workout record for %@", record.sport)
+            return
+        }
+        session.transferUserInfo(info)
+        NSLog("NOOP watch: queued workout record %@ %@", record.sport, record.id.uuidString)
     }
 
     func applyDirectState(_ state: WatchDirectLiveState) {
@@ -114,7 +136,12 @@ final class WatchSnapshotStore: NSObject, ObservableObject, WCSessionDelegate {
             batteryPct: state.batteryPct ?? snapshot?.batteryPct,
             // `bonded` means "strap connected to the iPhone", which is false while the watch has it.
             bonded: false,
-            updated: Date()
+            updated: Date(),
+            effort: snapshot?.effort,
+            rest: snapshot?.rest,
+            hrvMs: snapshot?.hrvMs,
+            restingHr: snapshot?.restingHr,
+            sleepMin: snapshot?.sleepMin
         )
         snapshot.saveForWatch()
         self.snapshot = snapshot
